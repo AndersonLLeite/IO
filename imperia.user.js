@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Imperia Suite
 // @namespace    imperia-scripts
-// @version      2.0.0
+// @version      2.0.1
 // @description  Carregador das ferramentas do Imperia Online (resumo de treinos, calculadora de marcha e radar do mapa).
 // @author       AndersonLLeite
 // @match        https://*.imperiaonline.org/imperia/game_v5/game/*
@@ -12,10 +12,10 @@
 // @updateURL    https://raw.githubusercontent.com/AndersonLLeite/IO/main/imperia.user.js
 // Os módulos são fixados por commit: o Tampermonkey guarda @require em cache,
 // e um link fixo garante que a versão baixada é exatamente a desta versão do carregador.
-// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/360110f7f8dfb6f80118c6d7da9b6c6847cec091/src/core.js
-// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/360110f7f8dfb6f80118c6d7da9b6c6847cec091/src/modules/soldados-treino.js
-// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/360110f7f8dfb6f80118c6d7da9b6c6847cec091/src/modules/calculadora-marcha.js
-// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/360110f7f8dfb6f80118c6d7da9b6c6847cec091/src/modules/radar-mapa.js
+// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/c1fbd6a7e32d97126c9d4dd05a9750abb586d322/src/core.js
+// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/c1fbd6a7e32d97126c9d4dd05a9750abb586d322/src/modules/soldados-treino.js
+// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/c1fbd6a7e32d97126c9d4dd05a9750abb586d322/src/modules/calculadora-marcha.js
+// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/c1fbd6a7e32d97126c9d4dd05a9750abb586d322/src/modules/radar-mapa.js
 // ==/UserScript==
 
 (function () {
