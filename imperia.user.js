@@ -12,10 +12,10 @@
 // @updateURL    https://raw.githubusercontent.com/AndersonLLeite/IO/main/imperia.user.js
 // Os módulos são fixados por commit: o Tampermonkey guarda @require em cache,
 // e um link fixo garante que a versão baixada é exatamente a desta versão do carregador.
-// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/__REV__/src/core.js
-// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/__REV__/src/modules/soldados-treino.js
-// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/__REV__/src/modules/calculadora-marcha.js
-// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/__REV__/src/modules/radar-mapa.js
+// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/360110f7f8dfb6f80118c6d7da9b6c6847cec091/src/core.js
+// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/360110f7f8dfb6f80118c6d7da9b6c6847cec091/src/modules/soldados-treino.js
+// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/360110f7f8dfb6f80118c6d7da9b6c6847cec091/src/modules/calculadora-marcha.js
+// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/360110f7f8dfb6f80118c6d7da9b6c6847cec091/src/modules/radar-mapa.js
 // ==/UserScript==
 
 (function () {
