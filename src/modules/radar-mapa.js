@@ -104,31 +104,44 @@ IO.register({
       return ids;
     }
 
+    // O jogo troca os rótulos conforme o idioma (pt-PT: "Dono", "Tamanho do bónus";
+    // pt-BR: "Dono da colônia", "Bônus"), então a busca ignora acentos e aceita variantes.
+    const normalize = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    function pickKey(t, test) {
+      const hit = Object.keys(t).find((k) => test(normalize(k)));
+      return hit === undefined ? undefined : t[hit];
+    }
+
     function parseObject(cell, o, blockId) {
       const t = {};
       (o.ttp || []).forEach((e) => { if (e && e.key) t[String(e.key).trim()] = e.vl; });
       const x = +cell.x, y = +cell.y;
-      const terrain = unhtml(t['Tipo de terreno'] || '');
-      const srvDist = t['Distância para o Império'];
+      const terrain = unhtml(pickKey(t, (k) => k.includes('terreno')) || '');
+      const srvDist = pickKey(t, (k) => k.startsWith('dist'));
       const base = { id: String(o.id), type: String(o.type), x, y, block: blockId, acs: o.acs || [],
         srvDist: srvDist === undefined || srvDist === '' ? null : +srvDist };
-      const size = unhtml(t['Tamanho do bónus'] || '').trim();
-      const bonus = t['Tipo de bónus']
-        ? { bonusType: unhtml(t['Tipo de bónus']), bonusSize: /^\d+([.,]\d+)?$/.test(size) ? size + '%' : size }
+      const bonusType = pickKey(t, (k) => k.includes('bonus') && k.includes('tipo'));
+      const size = unhtml(pickKey(t, (k) => k === 'bonus' || k.includes('tamanho')) || '').trim();
+      const bonus = bonusType
+        ? { bonusType: unhtml(bonusType), bonusSize: /^\d+([.,]\d+)?$/.test(size) ? size + '%' : size }
         : {};
       const resourceName = /^recurso especial/i.test(terrain) ? terrain.replace(/^recurso especial\s*/i, '') : '';
+      const userName = pickKey(t, (k) => k.includes('nome') && (k.includes('utilizador') || k.includes('usuario')));
+      const ownerName = pickKey(t, (k) => k.startsWith('dono'));
+      const alliance = unhtml(pickKey(t, (k) => k.startsWith('alian')) || '');
+      const points = toNumber(pickKey(t, (k) => k.startsWith('pontos')));
 
       // Impérios não são listados; servem só para achar o id do dono de colónias que vêm sem ele.
-      if (t['Nome de utilizador'] !== undefined) {
-        return { kind: 'owner', name: unhtml(t['Nome de utilizador']), userId: String(o.id) };
+      if (userName !== undefined) {
+        return { kind: 'owner', name: unhtml(userName), userId: String(o.id) };
       }
-      if (o.colony && t['Dono']) {
+      if (o.colony && ownerName) {
         const ownerId = String(o.id).split('|')[1] || '';
-        return { ...base, kind: 'colony', name: unhtml(t['Dono']), userId: ownerId, points: toNumber(t['Pontos']),
-          alliance: unhtml(t['Aliança'] || ''), raceId: o.race_id || 0, terrain, resourceName, ...bonus };
+        return { ...base, kind: 'colony', name: unhtml(ownerName), userId: ownerId, points,
+          alliance, raceId: o.race_id || 0, terrain, resourceName, ...bonus };
       }
       if (/^centro militar/i.test(terrain)) {
-        return { ...base, kind: 'military', name: terrain, alliance: unhtml(t['Aliança'] || '') };
+        return { ...base, kind: 'military', name: terrain, alliance };
       }
       if (resourceName && bonus.bonusSize === RESOURCE_BONUS) {
         return { ...base, kind: 'resource', name: resourceName, resourceName, terrain, ...bonus };

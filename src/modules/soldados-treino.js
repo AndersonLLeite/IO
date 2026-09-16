@@ -6,10 +6,12 @@ IO.register({
   init(IO) {
     const { $, $$, fmt, toNumber } = IO.utils;
     const SUMMARY_CLASS = 'io-trn-summary';
+    // O rótulo muda conforme o idioma do jogo, então a busca ignora acentos e usa palavras-chave.
+    const normalize = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
     const SECTIONS = [
-      { key: 'started', label: 'Em treino', headerText: 'Unidades em treinamento' },
-      { key: 'completed', label: 'Concluídos', headerText: 'Treinamentos concluídos' },
-      { key: 'pending', label: 'Pendentes', headerText: 'Treinamentos pendentes' },
+      { key: 'started', label: 'Em treino', match: (k) => k.includes('unidades') && k.includes('trein') },
+      { key: 'completed', label: 'Concluídos', match: (k) => k.includes('trein') && k.includes('conclu') },
+      { key: 'pending', label: 'Pendentes', match: (k) => k.includes('trein') && k.includes('pendente') },
     ];
 
     // Mesma requisição do link "Mostrar mais"; só o HTML da lista é lido.
@@ -35,7 +37,8 @@ IO.register({
     function readHeaderTotals(root) {
       const totals = {};
       $$(root, 'table.data-grid td').forEach((td) => {
-        const section = SECTIONS.find((s) => td.textContent.trim() === s.headerText);
+        const text = normalize(td.textContent);
+        const section = SECTIONS.find((s) => s.match(text));
         if (section && td.nextElementSibling) totals[section.key] = toNumber(td.nextElementSibling.textContent);
       });
       return totals;
