@@ -275,6 +275,7 @@ IO.register({
       .io-alp .io-alp-sim-bar label { display:inline-flex; align-items:center; gap:4px; }
       .io-alp .io-alp-sim-bar input { width:auto; }
       .io-alp input.io-alp-cost { width:60px; text-align:right; }
+      .io-alp input.io-alp-cost:placeholder-shown { border-color:#a40000; }
       .io-alp td.io-alp-prio { white-space:nowrap; }
       .io-alp td.io-alp-prio button { padding:0 4px; }
       .io-alp tr.io-alp-off td { opacity:.55; }
@@ -400,6 +401,8 @@ IO.register({
       const days = sim.days != null ? sim.days : (data.era || 0);
       const { rows, perDay, left, income } = simulate(race, byRace);
       const bucket = byRace[race] || { members: 0 };
+      // O jogo só mostra os preços de treino da raça do jogador; os da outra raça são escritos à mão.
+      const noPrice = rows.filter((r) => !(r.cost.wood > 0 || r.cost.iron > 0));
       const missing = rows.some((r) => r.on && !(r.cost.wood > 0 || r.cost.iron > 0));
       // Em destaque: as tropas escolhidas para a raça, mais qualquer outra que esteja marcada.
       const stars = FEATURED[race] || [];
@@ -413,8 +416,8 @@ IO.register({
         </td>
         <td><label><input type="checkbox" class="io-alp-pick" autocomplete="off" data-code="${esc(r.code)}"${r.on ? ' checked' : ''}>
           ${unitIcon(race, r.code)}${esc(unitName(race, r.code, byRace))}</label></td>
-        <td class="num"><input class="io-alp-cost" autocomplete="off" data-code="${esc(r.code)}" data-res="wood" value="${r.cost.wood || ''}" size="6"></td>
-        <td class="num"><input class="io-alp-cost" autocomplete="off" data-code="${esc(r.code)}" data-res="iron" value="${r.cost.iron || ''}" size="6"></td>
+        <td class="num"><input class="io-alp-cost" autocomplete="off" data-code="${esc(r.code)}" data-res="wood" value="${r.cost.wood || ''}" placeholder="?" size="6"></td>
+        <td class="num"><input class="io-alp-cost" autocomplete="off" data-code="${esc(r.code)}" data-res="iron" value="${r.cost.iron || ''}" placeholder="?" size="6"></td>
         <td class="num">${r.on ? num(r.qty) : '—'}</td>
         <td class="num">${r.on ? num(Math.floor(r.qty * days)) : '—'}</td>
       </tr>`;
@@ -436,6 +439,7 @@ IO.register({
             </select>
           </label>
           <button type="button" class="button-v2 io-alp-sim-reset">Repor</button>
+          ${noPrice.length && race !== own ? `<button type="button" class="button-v2 io-alp-copy-costs">Copiar preços dos ${esc(RACES[own] || own)}</button>` : ''}
         </div>
         <table class="data-grid espy">
           <tr><th>Prio.</th><th>Unidade</th><th class="num">Madeira</th><th class="num">Ferro</th>
@@ -453,7 +457,10 @@ IO.register({
         <div class="io-alp-when">${bucket.members} membros ${esc(RACES[race] || race)} produzem ${num(income.wood)} madeira/h e ${num(income.iron)} ferro/h
           — em 24 h, menos o imposto, dá o disponível por dia acima.
           ${data.era ? 'A era acaba em ' + (Math.round(data.era * 10) / 10) + ' dias.' : 'Fim da era desconhecido.'}
-          Os preços são os do teu quartel${missing ? ' — preenche à mão os preços das unidades da outra raça' : ''}.</div>`;
+          Os preços são os do teu quartel.
+          ${noPrice.length && race !== own ? `<br><b>O jogo só mostra os preços da tua raça (${esc(RACES[own] || own)}).</b>
+            Escreve os preços dos ${esc(RACES[race] || race)} nas caixas (ficam guardados) ou copia os teus como aproximação.` : ''}
+          ${missing ? '<br><b>As tropas marcadas sem preço não entram na conta.</b>' : ''}</div>`;
     }
 
     function bindSimulator(target, refresh) {
@@ -463,6 +470,19 @@ IO.register({
         sim.tax[input.dataset.res] = parseFloat(String(input.value).replace(',', '.')) || 0;
         saveSim(); refresh();
       }));
+      const copy = $(target, '.io-alp-copy-costs');
+      if (copy) copy.addEventListener('click', () => {
+        const own = data.ownRace || IO.game.playerRaceId();
+        const from = costs[own] || {};
+        const race = sim.race;
+        costs[race] = costs[race] || {};
+        Object.keys(from).forEach((code) => {
+          if (costs[race][code] && (costs[race][code].wood > 0 || costs[race][code].iron > 0)) return;
+          costs[race][code] = { ...costs[race][code], wood: from[code].wood, iron: from[code].iron };
+        });
+        IO.store.db.set(COSTS_KEY(race), costs[race]);
+        refresh();
+      });
       const toggle = $(target, '.io-alp-toggle');
       if (toggle) toggle.addEventListener('click', () => { sim.showAll = !sim.showAll; saveSim(); refresh(); });
       const modeSel = $(target, '.io-alp-mode');
