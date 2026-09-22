@@ -135,6 +135,34 @@ IO.register({
       return out;
     }
 
+    // Preço de treino (madeira/ferro) das duas raças, lido dos quartéis do reino.
+    // O quartel só mostra os preços da raça do jogador, por isso os da outra ficam aqui;
+    // ao carregar os dados, os preços reais da tua raça substituem estes.
+    const DEFAULT_COSTS = {
+      1: {
+        p1: { name: 'Lanceiros', wood: 245, iron: 5 }, p2: { name: 'Lanceiros pesados', wood: 326, iron: 16 },
+        p3: { name: 'Falanges', wood: 571, iron: 49 }, m1: { name: 'Espadachins', wood: 218, iron: 65 },
+        m2: { name: 'Espadachins Pesados', wood: 163, iron: 131 }, m3: { name: 'Guardiões', wood: 163, iron: 294 },
+        s1: { name: 'Arqueiros', wood: 490, iron: 11 }, s2: { name: 'Arqueiros pesados', wood: 694, iron: 24 },
+        s3: { name: 'Arqueiros de Elite', wood: 1306, iron: 65 }, k1: { name: 'Cavalaria Leve', wood: 544, iron: 109 },
+        k2: { name: 'Cavalaria Pesada', wood: 490, iron: 228 }, k3: { name: 'Paladinos', wood: 653, iron: 522 },
+        c1: { name: 'Aríetes', wood: 23120, iron: 816 }, c2: { name: 'Catapultas', wood: 36720, iron: 816 },
+        c3: { name: 'Trabucos', wood: 73440, iron: 1632 }, c4: { name: 'Balistas', wood: 28560, iron: 2448 },
+        ct: { name: 'Carrinhos de transporte', wood: 1800, iron: 40 }, ks: { name: 'Espião', wood: 500, iron: 100 },
+      },
+      2: {
+        p1: { name: 'Lançadores de dardos', wood: 122, iron: 3 }, p2: { name: 'Lanceiros pesados', wood: 163, iron: 8 },
+        m1: { name: 'Espadachins', wood: 109, iron: 33 }, m2: { name: 'Espadachins Pesados', wood: 82, iron: 65 },
+        s1: { name: 'Arqueiros', wood: 245, iron: 5 }, s2: { name: 'Arqueiros pesados', wood: 347, iron: 12 },
+        s3: { name: 'Arqueiros de Elite', wood: 653, iron: 33 }, k1: { name: 'Cavalaria Leve', wood: 408, iron: 82 },
+        k2: { name: 'Cavalaria Pesada', wood: 367, iron: 171 }, k3: { name: 'Catafractários', wood: 490, iron: 392 },
+        k4: { name: 'Arqueiros a cavalo', wood: 408, iron: 82 }, k5: { name: 'Arqueiros Catafractários', wood: 734, iron: 343 },
+        c1: { name: 'Aríetes', wood: 23120, iron: 816 }, c2: { name: 'Catapultas', wood: 36720, iron: 816 },
+        c3: { name: 'Trabucos', wood: 73440, iron: 1632 }, c4: { name: 'Balistas', wood: 28560, iron: 2448 },
+        ct: { name: 'Carrinhos de transporte', wood: 1800, iron: 40 }, ks: { name: 'Espião', wood: 500, iron: 100 },
+      },
+    };
+
     // Preço de treino de cada unidade, lido dos quartéis (só existe para a raça do jogador).
     const COSTS_KEY = (raceId) => `unit-costs-${raceId}`;
 
@@ -439,7 +467,6 @@ IO.register({
             </select>
           </label>
           <button type="button" class="button-v2 io-alp-sim-reset">Repor</button>
-          ${noPrice.length && race !== own ? `<button type="button" class="button-v2 io-alp-copy-costs">Copiar preços dos ${esc(RACES[own] || own)}</button>` : ''}
         </div>
         <table class="data-grid espy">
           <tr><th>Prio.</th><th>Unidade</th><th class="num">Madeira</th><th class="num">Ferro</th>
@@ -458,8 +485,7 @@ IO.register({
           — em 24 h, menos o imposto, dá o disponível por dia acima.
           ${data.era ? 'A era acaba em ' + (Math.round(data.era * 10) / 10) + ' dias.' : 'Fim da era desconhecido.'}
           Os preços são os do teu quartel.
-          ${noPrice.length && race !== own ? `<br><b>O jogo só mostra os preços da tua raça (${esc(RACES[own] || own)}).</b>
-            Escreve os preços dos ${esc(RACES[race] || race)} nas caixas (ficam guardados) ou copia os teus como aproximação.` : ''}
+          ${race === own ? '' : `<br>Os preços dos ${esc(RACES[race] || race)} vêm da tabela do reino; podes corrigi-los nas caixas.`}
           ${missing ? '<br><b>As tropas marcadas sem preço não entram na conta.</b>' : ''}</div>`;
     }
 
@@ -470,19 +496,6 @@ IO.register({
         sim.tax[input.dataset.res] = parseFloat(String(input.value).replace(',', '.')) || 0;
         saveSim(); refresh();
       }));
-      const copy = $(target, '.io-alp-copy-costs');
-      if (copy) copy.addEventListener('click', () => {
-        const own = data.ownRace || IO.game.playerRaceId();
-        const from = costs[own] || {};
-        const race = sim.race;
-        costs[race] = costs[race] || {};
-        Object.keys(from).forEach((code) => {
-          if (costs[race][code] && (costs[race][code].wood > 0 || costs[race][code].iron > 0)) return;
-          costs[race][code] = { ...costs[race][code], wood: from[code].wood, iron: from[code].iron };
-        });
-        IO.store.db.set(COSTS_KEY(race), costs[race]);
-        refresh();
-      });
       const toggle = $(target, '.io-alp-toggle');
       if (toggle) toggle.addEventListener('click', () => { sim.showAll = !sim.showAll; saveSim(); refresh(); });
       const modeSel = $(target, '.io-alp-mode');
@@ -711,8 +724,11 @@ IO.register({
     }
 
     IO.store.db.get(CACHE_KEY).then((saved) => { if (saved && saved.members) data = saved; });
-    Object.keys(UNITS).forEach((race) => {
-      IO.store.db.get(COSTS_KEY(race)).then((saved) => { if (saved) costs[race] = saved; });
+    Object.keys(DEFAULT_COSTS).forEach((race) => {
+      costs[race] = { ...DEFAULT_COSTS[race] };
+      IO.store.db.get(COSTS_KEY(race)).then((saved) => {
+        if (saved) costs[race] = { ...DEFAULT_COSTS[race], ...saved };
+      });
     });
 
     let scheduled = false;
