@@ -12,11 +12,11 @@
 // @updateURL    https://raw.githubusercontent.com/AndersonLLeite/IO/main/imperia.user.js
 // Os módulos são fixados por commit: o Tampermonkey guarda @require em cache,
 // e um link fixo garante que a versão baixada é exatamente a desta versão do carregador.
-// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/7f72fb007119206f99b8cb8cd6d938b75d887ba7/src/core.js
-// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/7f72fb007119206f99b8cb8cd6d938b75d887ba7/src/modules/soldados-treino.js
-// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/7f72fb007119206f99b8cb8cd6d938b75d887ba7/src/modules/calculadora-marcha.js
-// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/7f72fb007119206f99b8cb8cd6d938b75d887ba7/src/modules/radar-mapa.js
-// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/7f72fb007119206f99b8cb8cd6d938b75d887ba7/src/modules/alianca-panorama.js
+// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/d119d043a7261a89cd63da5db67b0b99bb3442f1/src/core.js
+// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/d119d043a7261a89cd63da5db67b0b99bb3442f1/src/modules/soldados-treino.js
+// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/d119d043a7261a89cd63da5db67b0b99bb3442f1/src/modules/calculadora-marcha.js
+// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/d119d043a7261a89cd63da5db67b0b99bb3442f1/src/modules/radar-mapa.js
+// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/d119d043a7261a89cd63da5db67b0b99bb3442f1/src/modules/alianca-panorama.js
 // ==/UserScript==
 
 (function () {
