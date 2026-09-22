@@ -404,10 +404,10 @@ IO.register({
           <button type="button" class="io-alp-up" data-code="${esc(r.code)}"${i === 0 ? ' disabled' : ''}>▲</button>
           <button type="button" class="io-alp-down" data-code="${esc(r.code)}"${i === rows.length - 1 ? ' disabled' : ''}>▼</button>
         </td>
-        <td><label><input type="checkbox" class="io-alp-pick" data-code="${esc(r.code)}"${r.on ? ' checked' : ''}>
+        <td><label><input type="checkbox" class="io-alp-pick" autocomplete="off" data-code="${esc(r.code)}"${r.on ? ' checked' : ''}>
           ${unitIcon(race, r.code)}${esc(unitName(race, r.code, byRace))}</label></td>
-        <td class="num"><input class="io-alp-cost" data-code="${esc(r.code)}" data-res="wood" value="${r.cost.wood || ''}" size="6"></td>
-        <td class="num"><input class="io-alp-cost" data-code="${esc(r.code)}" data-res="iron" value="${r.cost.iron || ''}" size="6"></td>
+        <td class="num"><input class="io-alp-cost" autocomplete="off" data-code="${esc(r.code)}" data-res="wood" value="${r.cost.wood || ''}" size="6"></td>
+        <td class="num"><input class="io-alp-cost" autocomplete="off" data-code="${esc(r.code)}" data-res="iron" value="${r.cost.iron || ''}" size="6"></td>
         <td class="num">${r.on ? num(r.qty) : '—'}</td>
         <td class="num">${r.on ? num(Math.floor(r.qty * days)) : '—'}</td>
       </tr>`;
@@ -415,15 +415,15 @@ IO.register({
       return `<h3>Simulador de produção</h3>
         <div class="io-alp-sim-bar">
           <label>Raça
-            <select class="io-alp-race">
+            <select class="io-alp-race" autocomplete="off">
               ${races.map((r) => `<option value="${esc(r)}"${r === race ? ' selected' : ''}>${esc(RACES[r] || r)} (${byRace[r].members})</option>`).join('')}
             </select>
           </label>
-          <label>Imposto madeira <input class="io-alp-tax" data-res="wood" value="${esc(sim.tax.wood || 0)}" size="3">%</label>
-          <label>Imposto ferro <input class="io-alp-tax" data-res="iron" value="${esc(sim.tax.iron || 0)}" size="3">%</label>
-          <label>Dias <input class="io-alp-days" value="${esc(Math.round(days * 10) / 10)}" size="4"></label>
+          <label>Imposto madeira <input class="io-alp-tax" autocomplete="off" data-res="wood" value="${esc(sim.tax.wood || 0)}" size="3">%</label>
+          <label>Imposto ferro <input class="io-alp-tax" autocomplete="off" data-res="iron" value="${esc(sim.tax.iron || 0)}" size="3">%</label>
+          <label>Dias <input class="io-alp-days" autocomplete="off" value="${esc(Math.round(days * 10) / 10)}" size="4"></label>
           <label>Modo
-            <select class="io-alp-mode">
+            <select class="io-alp-mode" autocomplete="off">
               <option value="balanced"${sim.mode === 'priority' ? '' : ' selected'}>Equilibrado</option>
               <option value="priority"${sim.mode === 'priority' ? ' selected' : ''}>Por prioridade</option>
             </select>
