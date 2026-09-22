@@ -133,6 +133,56 @@ IO.register({
       return out;
     }
 
+    // Preço de treino de cada unidade, lido dos quartéis (só existe para a raça do jogador).
+    const COSTS_KEY = (raceId) => `unit-costs-${raceId}`;
+
+    async function fetchOwnCosts() {
+      const costs = {};
+      for (const barracks of [7, 8, 9, 10]) {
+        const xml = await IO.game.xajaxRaw('soldiersTabs', ['N9', 'N0', `N${barracks}`]);
+        const dom = IO.game.xajaxDom(xml);
+        $$(dom, 'a.unit').forEach((a) => {
+          const code = (a.className.match(/unit-(\w+)/) || [])[1];
+          const wrap = a.closest('.hire-soldiers-wrap');
+          if (!code || !wrap || costs[code]) return;
+          const cost = { name: a.title || '' };
+          $$(wrap, '.hire-soldiers-resources span').forEach((s) => {
+            const key = s.className.replace('hire-soldiers-', '');
+            cost[key] = toNumber(s.textContent);
+          });
+          costs[code] = cost;
+        });
+        await sleep(300);
+      }
+      return costs;
+    }
+
+    // Tela "Fim da era" (o link do relógio do servidor): "Restam 26 Dias 08:16:36".
+    async function fetchEraDays() {
+      const xml = await IO.game.xajaxRaw('getEndEraInfo', ['N9']);
+      const text = normalize(IO.game.xajaxDom(xml).textContent);
+      const m = text.match(/restam\s+(?:(\d+)\s*dias?\s*)?(\d+):(\d{2}):(\d{2})/);
+      if (!m) return null;
+      return (parseInt(m[1] || '0', 10)) + parseInt(m[2], 10) / 24 + parseInt(m[3], 10) / 1440;
+    }
+
+    // Imposto da aliança (%) na ordem madeira, ferro, pedra, ouro.
+    async function fetchAllianceTax(tabArgs) {
+      const args = tabArgs.slice();
+      args[2] = 'N3'; // aba Tesouraria
+      const xml = await IO.game.xajaxRaw('allianceTabs', args);
+      const dom = IO.game.xajaxDom(xml);
+      const table = $$(dom, 'table').find((t) => normalize(t.textContent).includes('imposto'));
+      const tax = {};
+      if (table) {
+        const values = $$(table, 'tr')
+          .filter((tr) => tr.children.length === 2 && $(tr, 'input'))
+          .map((tr) => parseFloat(String($(tr, 'input').value).replace(',', '.')) || 0);
+        RES.forEach((r, i) => { if (values[i] !== undefined) tax[r.key] = values[i]; });
+      }
+      return tax;
+    }
+
     // ---------- estado ----------
     let data = null; // { when, members: [{ ..., army, eco }] }
     let loading = false;
@@ -151,8 +201,18 @@ IO.register({
           try { members[i].eco = await fetchEconomy(members[i].id); } catch (e) { members[i].error = e.message; }
           await sleep(350);
         }
-        data = { when: Date.now(), members };
+        progress = 'A ler impostos, custos e o fim da era';
+        onTick();
+        const ownRace = IO.game.playerRaceId();
+        const [era, tax, ownCosts] = await Promise.all([
+          fetchEraDays().catch(() => null),
+          fetchAllianceTax(tabArgs).catch(() => ({})),
+          fetchOwnCosts().catch(() => ({})),
+        ]);
+        if (Object.keys(ownCosts).length) IO.store.db.set(COSTS_KEY(ownRace), ownCosts);
+        data = { when: Date.now(), members, era, tax, ownRace };
         IO.store.db.set(CACHE_KEY, data);
+        costs[ownRace] = ownCosts;
       } finally {
         loading = false;
         progress = '';
@@ -166,7 +226,8 @@ IO.register({
       const eco = { stock: {}, income: {}, maintenance: 0, population: 0, workers: 0, growth: 0 };
       members.forEach((m) => {
         const race = RACES[m.race] ? m.race : '1';
-        const bucket = (byRace[race] = byRace[race] || { total: 0, units: new Map() });
+        const bucket = (byRace[race] = byRace[race] || { total: 0, units: new Map(), income: {}, members: 0 });
+        bucket.members += 1;
         if (m.army) {
           m.army.units.forEach((u) => {
             const info = unitInfo(race, u.name);
@@ -180,6 +241,7 @@ IO.register({
           RES.forEach((r) => {
             eco.stock[r.key] = (eco.stock[r.key] || 0) + (m.eco.stock[r.key] || 0);
             eco.income[r.key] = (eco.income[r.key] || 0) + (m.eco.income[r.key] || 0);
+            bucket.income[r.key] = (bucket.income[r.key] || 0) + (m.eco.income[r.key] || 0);
           });
           eco.maintenance += m.eco.maintenance || 0;
           eco.population += m.eco.population || 0;
@@ -207,10 +269,163 @@ IO.register({
       .io-alp th.sortable { cursor:pointer; }
       .io-alp .io-alp-cat td { background:rgba(0,0,0,.05); font-weight:bold; }
       .io-alp .io-alp-msg { padding:14px; text-align:center; }
+      .io-alp .io-alp-sim-bar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:0 0 6px; }
+      .io-alp .io-alp-sim-bar label { display:inline-flex; align-items:center; gap:4px; }
+      .io-alp .io-alp-sim-bar input { width:auto; }
+      .io-alp input.io-alp-cost { width:60px; text-align:right; }
+      .io-alp td.io-alp-prio { white-space:nowrap; }
+      .io-alp td.io-alp-prio button { padding:0 4px; }
+      .io-alp tr.io-alp-off td { opacity:.55; }
+      .io-alp td label { display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
     `);
 
     let sortKey = 'army';
     let sortDir = -1;
+
+    // ---------- simulador de produção ----------
+    const SIM_KEY = 'io_alp_sim_v1';
+    const costs = {}; // raça → { code: { wood, iron, name } }
+    let sim = IO.store.local.get(SIM_KEY, { race: '', tax: {}, order: [], on: {}, days: null });
+
+    const saveSim = () => IO.store.local.set(SIM_KEY, sim);
+    const unitCost = (race, code) => (costs[race] && costs[race][code]) || {};
+
+    function unitName(race, code, byRace) {
+      const known = unitCost(race, code).name;
+      if (known) return known;
+      const bucket = byRace && byRace[race];
+      const unit = bucket && bucket.units.get(code);
+      return (unit && unit.name) || code;
+    }
+
+    // Todos os códigos da raça: os que têm preço conhecido mais os que já existem no exército.
+    function unitCodes(race, byRace) {
+      const fromCosts = Object.keys(costs[race] || {});
+      const fromArmy = byRace && byRace[race] ? [...byRace[race].units.keys()] : [];
+      const known = [...new Set([...fromCosts, ...fromArmy])];
+      const order = (UNITS[race] || []).map(([, code]) => code);
+      known.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+      return known;
+    }
+
+    function simOrder(race, byRace) {
+      const codes = unitCodes(race, byRace);
+      const chosen = (sim.order || []).filter((c) => codes.includes(c));
+      return [...chosen, ...codes.filter((c) => !chosen.includes(c))];
+    }
+
+    function simulate(race, byRace) {
+      const income = (byRace[race] && byRace[race].income) || {};
+      const tax = sim.tax || {};
+      const perDay = {};
+      RES.forEach((r) => {
+        const rate = Math.min(100, Math.max(0, Number(tax[r.key]) || 0));
+        perDay[r.key] = (income[r.key] || 0) * 24 * (1 - rate / 100);
+      });
+      const left = { ...perDay };
+      const rows = simOrder(race, byRace).map((code) => {
+        const cost = unitCost(race, code);
+        const used = RES.filter((r) => cost[r.key] > 0);
+        const on = sim.on && sim.on[code];
+        if (!on || !used.length) return { code, cost, qty: 0, on: !!on };
+        const qty = Math.floor(Math.min(...used.map((r) => left[r.key] / cost[r.key])));
+        used.forEach((r) => { left[r.key] -= qty * cost[r.key]; });
+        return { code, cost, qty: Math.max(0, qty), on: true };
+      });
+      return { rows, perDay, left };
+    }
+
+    function simulatorHtml(byRace) {
+      const races = Object.keys(byRace);
+      if (!races.length) return '';
+      const own = data.ownRace || IO.game.playerRaceId();
+      if (!sim.race || !races.includes(sim.race)) sim.race = races.includes(own) ? own : races[0];
+      if (!sim.tax || !Object.keys(sim.tax).length) sim.tax = { ...(data.tax || {}) };
+      const race = sim.race;
+      const days = sim.days != null ? sim.days : (data.era || 0);
+      const { rows, perDay, left } = simulate(race, byRace);
+      const bucket = byRace[race] || { members: 0 };
+      const missing = rows.some((r) => r.on && !(r.cost.wood > 0 || r.cost.iron > 0));
+
+      const row = (r, i) => `<tr class="${r.on ? '' : 'io-alp-off'}">
+        <td class="io-alp-prio">
+          <button type="button" class="io-alp-up" data-code="${esc(r.code)}"${i === 0 ? ' disabled' : ''}>▲</button>
+          <button type="button" class="io-alp-down" data-code="${esc(r.code)}"${i === rows.length - 1 ? ' disabled' : ''}>▼</button>
+        </td>
+        <td><label><input type="checkbox" class="io-alp-pick" data-code="${esc(r.code)}"${r.on ? ' checked' : ''}>
+          ${unitIcon(race, r.code)}${esc(unitName(race, r.code, byRace))}</label></td>
+        <td class="num"><input class="io-alp-cost" data-code="${esc(r.code)}" data-res="wood" value="${r.cost.wood || ''}" size="6"></td>
+        <td class="num"><input class="io-alp-cost" data-code="${esc(r.code)}" data-res="iron" value="${r.cost.iron || ''}" size="6"></td>
+        <td class="num">${r.on ? fmt(r.qty) : '—'}</td>
+        <td class="num">${r.on ? fmt(Math.floor(r.qty * days)) : '—'}</td>
+      </tr>`;
+
+      return `<h3>Simulador de produção</h3>
+        <div class="io-alp-sim-bar">
+          <label>Raça
+            <select class="io-alp-race">
+              ${races.map((r) => `<option value="${esc(r)}"${r === race ? ' selected' : ''}>${esc(RACES[r] || r)} (${byRace[r].members})</option>`).join('')}
+            </select>
+          </label>
+          <label>Imposto madeira <input class="io-alp-tax" data-res="wood" value="${esc(sim.tax.wood || 0)}" size="3">%</label>
+          <label>Imposto ferro <input class="io-alp-tax" data-res="iron" value="${esc(sim.tax.iron || 0)}" size="3">%</label>
+          <label>Dias <input class="io-alp-days" value="${esc(Math.round(days * 10) / 10)}" size="4"></label>
+          <button type="button" class="button-v2 io-alp-sim-reset">Repor</button>
+        </div>
+        <table class="data-grid espy">
+          <tr><th>Prio.</th><th>Unidade</th><th class="num">Madeira</th><th class="num">Ferro</th>
+            <th class="num">Por dia</th><th class="num">Em ${fmt(Math.round(days))} dias</th></tr>
+          ${rows.map(row).join('')}
+          <tr class="total"><td></td><td>Disponível por dia (após imposto)</td>
+            <td class="num">${fmt(Math.round(perDay.wood || 0))}</td>
+            <td class="num">${fmt(Math.round(perDay.iron || 0))}</td>
+            <td class="num" colspan="2">sobra: ${fmt(Math.round(left.wood || 0))} madeira · ${fmt(Math.round(left.iron || 0))} ferro</td></tr>
+        </table>
+        <div class="io-alp-when">${bucket.members} membros ${esc(RACES[race] || race)} · ${data.era ? 'a era acaba em ' + (Math.round(data.era * 10) / 10) + ' dias' : 'fim da era desconhecido'} ·
+          os preços são os do teu quartel${missing ? ' — preenche os preços das unidades da outra raça à mão' : ''}.</div>`;
+    }
+
+    function bindSimulator(target, refresh) {
+      const raceSel = $(target, '.io-alp-race');
+      if (raceSel) raceSel.addEventListener('change', () => { sim.race = raceSel.value; saveSim(); refresh(); });
+      $$(target, '.io-alp-tax').forEach((input) => input.addEventListener('change', () => {
+        sim.tax[input.dataset.res] = parseFloat(String(input.value).replace(',', '.')) || 0;
+        saveSim(); refresh();
+      }));
+      const daysInput = $(target, '.io-alp-days');
+      if (daysInput) daysInput.addEventListener('change', () => {
+        sim.days = parseFloat(String(daysInput.value).replace(',', '.')) || 0;
+        saveSim(); refresh();
+      });
+      $$(target, '.io-alp-pick').forEach((box) => box.addEventListener('change', () => {
+        sim.on[box.dataset.code] = box.checked;
+        saveSim(); refresh();
+      }));
+      $$(target, '.io-alp-cost').forEach((input) => input.addEventListener('change', () => {
+        const code = input.dataset.code;
+        const race = sim.race;
+        costs[race] = costs[race] || {};
+        costs[race][code] = { ...costs[race][code], [input.dataset.res]: toNumber(input.value) };
+        IO.store.db.set(COSTS_KEY(race), costs[race]);
+        refresh();
+      }));
+      const move = (code, delta) => {
+        const order = simOrder(sim.race, aggregate(data.members).byRace);
+        const i = order.indexOf(code);
+        const j = i + delta;
+        if (i < 0 || j < 0 || j >= order.length) return;
+        order.splice(j, 0, order.splice(i, 1)[0]);
+        sim.order = order;
+        saveSim(); refresh();
+      };
+      $$(target, '.io-alp-up').forEach((b) => b.addEventListener('click', () => move(b.dataset.code, -1)));
+      $$(target, '.io-alp-down').forEach((b) => b.addEventListener('click', () => move(b.dataset.code, 1)));
+      const reset = $(target, '.io-alp-sim-reset');
+      if (reset) reset.addEventListener('click', () => {
+        sim = { race: '', tax: { ...(data.tax || {}) }, order: [], on: {}, days: null };
+        saveSim(); refresh();
+      });
+    }
 
     const unitIcon = (race, code) => (code ? `<span class="unit race-${esc(race)} unit-${esc(code)}"></span>` : '');
 
@@ -295,6 +510,7 @@ IO.register({
         const { byRace, eco } = aggregate(data.members);
         const races = Object.keys(byRace).sort();
         body = `
+          ${simulatorHtml(byRace)}
           <h3>Exército da aliança</h3>
           <div class="io-alp-cols">
             ${races.map((r) => `<div><b>${esc(RACES[r] || 'Raça ' + r)}</b>${armyTable(r, byRace[r])}</div>`).join('')}
@@ -323,6 +539,7 @@ IO.register({
           refresh();
         });
       }
+      if (data) bindSimulator(target, refresh);
       $$(target, 'th.sortable').forEach((th) => th.addEventListener('click', () => {
         const key = th.dataset.sort;
         if (sortKey === key) sortDir = -sortDir;
@@ -384,6 +601,9 @@ IO.register({
     }
 
     IO.store.db.get(CACHE_KEY).then((saved) => { if (saved && saved.members) data = saved; });
+    Object.keys(UNITS).forEach((race) => {
+      IO.store.db.get(COSTS_KEY(race)).then((saved) => { if (saved) costs[race] = saved; });
+    });
 
     let scheduled = false;
     new MutationObserver(() => {
