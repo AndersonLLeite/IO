@@ -285,7 +285,8 @@ IO.register({
     // ---------- simulador de produção ----------
     const SIM_KEY = 'io_alp_sim_v1';
     const costs = {}; // raça → { code: { wood, iron, name } }
-    let sim = IO.store.local.get(SIM_KEY, { race: '', tax: {}, order: [], on: {}, days: null });
+    let sim = IO.store.local.get(SIM_KEY, { race: '', tax: {}, order: {}, on: {}, days: null });
+    if (Array.isArray(sim.order)) sim.order = {}; // formato antigo: a ordem era comum às duas raças
 
     const saveSim = () => IO.store.local.set(SIM_KEY, sim);
     const unitCost = (race, code) => (costs[race] && costs[race][code]) || {};
@@ -310,7 +311,7 @@ IO.register({
 
     function simOrder(race, byRace) {
       const codes = unitCodes(race, byRace);
-      const chosen = (sim.order || []).filter((c) => codes.includes(c));
+      const chosen = ((sim.order && sim.order[race]) || []).filter((c) => codes.includes(c));
       return [...chosen, ...codes.filter((c) => !chosen.includes(c))];
     }
 
@@ -415,14 +416,14 @@ IO.register({
         const j = i + delta;
         if (i < 0 || j < 0 || j >= order.length) return;
         order.splice(j, 0, order.splice(i, 1)[0]);
-        sim.order = order;
+        sim.order[sim.race] = order;
         saveSim(); refresh();
       };
       $$(target, '.io-alp-up').forEach((b) => b.addEventListener('click', () => move(b.dataset.code, -1)));
       $$(target, '.io-alp-down').forEach((b) => b.addEventListener('click', () => move(b.dataset.code, 1)));
       const reset = $(target, '.io-alp-sim-reset');
       if (reset) reset.addEventListener('click', () => {
-        sim = { race: '', tax: { ...(data.tax || {}) }, order: [], on: {}, days: null };
+        sim = { race: '', tax: { ...(data.tax || {}) }, order: {}, on: {}, days: null };
         saveSim(); refresh();
       });
     }
