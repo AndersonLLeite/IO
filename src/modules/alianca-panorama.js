@@ -429,8 +429,6 @@ IO.register({
       const days = sim.days != null ? sim.days : (data.era || 0);
       const { rows, perDay, left, income } = simulate(race, byRace);
       const bucket = byRace[race] || { members: 0 };
-      // O jogo só mostra os preços de treino da raça do jogador; os da outra raça são escritos à mão.
-      const noPrice = rows.filter((r) => !(r.cost.wood > 0 || r.cost.iron > 0));
       const missing = rows.some((r) => r.on && !(r.cost.wood > 0 || r.cost.iron > 0));
       // Em destaque: as tropas escolhidas para a raça, mais qualquer outra que esteja marcada.
       const stars = FEATURED[race] || [];
