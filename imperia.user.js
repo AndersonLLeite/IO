@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Imperia Suite
 // @namespace    imperia-scripts
-// @version      2.2.0
+// @version      2.3.0
 // @description  Carregador das ferramentas do Imperia Online (resumo de treinos, calculadora de marcha, radar do mapa e panorama da aliança).
 // @author       AndersonLLeite
 // @match        https://*.imperiaonline.org/imperia/game_v5/game/*
