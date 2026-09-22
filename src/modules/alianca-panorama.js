@@ -315,6 +315,59 @@ IO.register({
       return [...chosen, ...codes.filter((c) => !chosen.includes(c))];
     }
 
+    // Distribui os recursos do dia pelas unidades escolhidas.
+    // "equilibrado" procura a mistura que gasta o máximo dos dois recursos; "prioridade" enche
+    // a primeira unidade da lista até esgotar e só depois passa à seguinte.
+    function allocate(picked, costOf, avail) {
+      const qty = {};
+      const left = { wood: avail.wood, iron: avail.iron };
+      const take = (code, n) => {
+        const units = Math.floor(n);
+        if (!(units > 0)) return;
+        qty[code] = (qty[code] || 0) + units;
+        left.wood -= units * (costOf(code).wood || 0);
+        left.iron -= units * (costOf(code).iron || 0);
+      };
+      const maxOf = (code, pool) => {
+        const cost = costOf(code);
+        const limits = RES.slice(0, 2).filter((r) => cost[r.key] > 0).map((r) => pool[r.key] / cost[r.key]);
+        return limits.length ? Math.min(...limits) : 0;
+      };
+
+      if (sim.mode !== 'priority' && picked.length > 1) {
+        // O ótimo de um problema com dois recursos está sempre em uma ou duas unidades:
+        // testamos todas as hipóteses e ficamos com a que aproveita melhor madeira e ferro.
+        const score = (w, f) => (avail.wood ? w / avail.wood : 0) + (avail.iron ? f / avail.iron : 0);
+        let best = null;
+        const consider = (plan, rank) => {
+          const w = plan.reduce((t, [c, n]) => t + n * (costOf(c).wood || 0), 0);
+          const f = plan.reduce((t, [c, n]) => t + n * (costOf(c).iron || 0), 0);
+          if (w > avail.wood + 1e-6 || f > avail.iron + 1e-6) return;
+          const value = score(w, f);
+          if (!best || value > best.value + 1e-9 || (Math.abs(value - best.value) <= 1e-9 && rank < best.rank)) {
+            best = { plan, value, rank };
+          }
+        };
+        picked.forEach((code, i) => consider([[code, maxOf(code, avail)]], i));
+        for (let i = 0; i < picked.length; i++) {
+          for (let j = i + 1; j < picked.length; j++) {
+            const a = costOf(picked[i]);
+            const b = costOf(picked[j]);
+            const det = (a.wood || 0) * (b.iron || 0) - (b.wood || 0) * (a.iron || 0);
+            if (!det) continue;
+            const x = (avail.wood * (b.iron || 0) - avail.iron * (b.wood || 0)) / det;
+            const y = ((a.wood || 0) * avail.iron - (a.iron || 0) * avail.wood) / det;
+            if (x >= 0 && y >= 0) consider([[picked[i], x], [picked[j], y]], i + j);
+          }
+        }
+        if (best) best.plan.forEach(([code, n]) => take(code, n));
+      }
+
+      // Sobras (e o modo por prioridade): enche pela ordem da lista.
+      picked.forEach((code) => take(code, maxOf(code, left)));
+      return { qty, left };
+    }
+
     function simulate(race, byRace) {
       const income = (byRace[race] && byRace[race].income) || {};
       const tax = sim.tax || {};
@@ -323,17 +376,15 @@ IO.register({
         const rate = Math.min(100, Math.max(0, Number(tax[r.key]) || 0));
         perDay[r.key] = (income[r.key] || 0) * 24 * (1 - rate / 100);
       });
-      const left = { ...perDay };
-      const rows = simOrder(race, byRace).map((code) => {
-        const cost = unitCost(race, code);
-        const used = RES.filter((r) => cost[r.key] > 0);
-        const on = sim.on && sim.on[code];
-        if (!on || !used.length) return { code, cost, qty: 0, on: !!on };
-        const qty = Math.floor(Math.min(...used.map((r) => left[r.key] / cost[r.key])));
-        used.forEach((r) => { left[r.key] -= qty * cost[r.key]; });
-        return { code, cost, qty: Math.max(0, qty), on: true };
-      });
-      return { rows, perDay, left };
+      const order = simOrder(race, byRace);
+      const costOf = (code) => unitCost(race, code);
+      const picked = order.filter((code) => sim.on && sim.on[code]
+        && (costOf(code).wood > 0 || costOf(code).iron > 0));
+      const { qty, left } = allocate(picked, costOf, perDay);
+      const rows = order.map((code) => ({
+        code, cost: costOf(code), qty: qty[code] || 0, on: !!(sim.on && sim.on[code]),
+      }));
+      return { rows, perDay, left, income };
     }
 
     function simulatorHtml(byRace) {
@@ -344,7 +395,7 @@ IO.register({
       if (!sim.tax || !Object.keys(sim.tax).length) sim.tax = { ...(data.tax || {}) };
       const race = sim.race;
       const days = sim.days != null ? sim.days : (data.era || 0);
-      const { rows, perDay, left } = simulate(race, byRace);
+      const { rows, perDay, left, income } = simulate(race, byRace);
       const bucket = byRace[race] || { members: 0 };
       const missing = rows.some((r) => r.on && !(r.cost.wood > 0 || r.cost.iron > 0));
 
@@ -357,8 +408,8 @@ IO.register({
           ${unitIcon(race, r.code)}${esc(unitName(race, r.code, byRace))}</label></td>
         <td class="num"><input class="io-alp-cost" data-code="${esc(r.code)}" data-res="wood" value="${r.cost.wood || ''}" size="6"></td>
         <td class="num"><input class="io-alp-cost" data-code="${esc(r.code)}" data-res="iron" value="${r.cost.iron || ''}" size="6"></td>
-        <td class="num">${r.on ? fmt(r.qty) : '—'}</td>
-        <td class="num">${r.on ? fmt(Math.floor(r.qty * days)) : '—'}</td>
+        <td class="num">${r.on ? num(r.qty) : '—'}</td>
+        <td class="num">${r.on ? num(Math.floor(r.qty * days)) : '—'}</td>
       </tr>`;
 
       return `<h3>Simulador de produção</h3>
@@ -371,6 +422,12 @@ IO.register({
           <label>Imposto madeira <input class="io-alp-tax" data-res="wood" value="${esc(sim.tax.wood || 0)}" size="3">%</label>
           <label>Imposto ferro <input class="io-alp-tax" data-res="iron" value="${esc(sim.tax.iron || 0)}" size="3">%</label>
           <label>Dias <input class="io-alp-days" value="${esc(Math.round(days * 10) / 10)}" size="4"></label>
+          <label>Modo
+            <select class="io-alp-mode">
+              <option value="balanced"${sim.mode === 'priority' ? '' : ' selected'}>Equilibrado</option>
+              <option value="priority"${sim.mode === 'priority' ? ' selected' : ''}>Por prioridade</option>
+            </select>
+          </label>
           <button type="button" class="button-v2 io-alp-sim-reset">Repor</button>
         </div>
         <table class="data-grid espy">
@@ -378,12 +435,14 @@ IO.register({
             <th class="num">Por dia</th><th class="num">Em ${fmt(Math.round(days))} dias</th></tr>
           ${rows.map(row).join('')}
           <tr class="total"><td></td><td>Disponível por dia (após imposto)</td>
-            <td class="num">${fmt(Math.round(perDay.wood || 0))}</td>
-            <td class="num">${fmt(Math.round(perDay.iron || 0))}</td>
-            <td class="num" colspan="2">sobra: ${fmt(Math.round(left.wood || 0))} madeira · ${fmt(Math.round(left.iron || 0))} ferro</td></tr>
+            <td class="num">${num(perDay.wood)}</td>
+            <td class="num">${num(perDay.iron)}</td>
+            <td class="num" colspan="2">sobra: ${num(left.wood)} madeira · ${num(left.iron)} ferro</td></tr>
         </table>
-        <div class="io-alp-when">${bucket.members} membros ${esc(RACES[race] || race)} · ${data.era ? 'a era acaba em ' + (Math.round(data.era * 10) / 10) + ' dias' : 'fim da era desconhecido'} ·
-          os preços são os do teu quartel${missing ? ' — preenche os preços das unidades da outra raça à mão' : ''}.</div>`;
+        <div class="io-alp-when">${bucket.members} membros ${esc(RACES[race] || race)} produzem ${num(income.wood)} madeira/h e ${num(income.iron)} ferro/h
+          — em 24 h, menos o imposto, dá o disponível por dia acima.
+          ${data.era ? 'A era acaba em ' + (Math.round(data.era * 10) / 10) + ' dias.' : 'Fim da era desconhecido.'}
+          Os preços são os do teu quartel${missing ? ' — preenche à mão os preços das unidades da outra raça' : ''}.</div>`;
     }
 
     function bindSimulator(target, refresh) {
@@ -393,6 +452,8 @@ IO.register({
         sim.tax[input.dataset.res] = parseFloat(String(input.value).replace(',', '.')) || 0;
         saveSim(); refresh();
       }));
+      const modeSel = $(target, '.io-alp-mode');
+      if (modeSel) modeSel.addEventListener('change', () => { sim.mode = modeSel.value; saveSim(); refresh(); });
       const daysInput = $(target, '.io-alp-days');
       if (daysInput) daysInput.addEventListener('change', () => {
         sim.days = parseFloat(String(daysInput.value).replace(',', '.')) || 0;
@@ -423,10 +484,25 @@ IO.register({
       $$(target, '.io-alp-down').forEach((b) => b.addEventListener('click', () => move(b.dataset.code, 1)));
       const reset = $(target, '.io-alp-sim-reset');
       if (reset) reset.addEventListener('click', () => {
-        sim = { race: '', tax: { ...(data.tax || {}) }, order: {}, on: {}, days: null };
+        sim = { race: '', tax: { ...(data.tax || {}) }, order: {}, on: {}, days: null, mode: 'balanced' };
         saveSim(); refresh();
       });
     }
+
+    // 1 234 → "1,2k" · 14 440 741 → "14,4M" · 9 292 414 239 → "9,3B" (o valor exato fica no title)
+    function short(value) {
+      const n = Math.round(Number(value) || 0);
+      const abs = Math.abs(n);
+      const cut = (div, suffix) => {
+        const v = n / div;
+        return String(Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10).replace('.', ',') + suffix;
+      };
+      if (abs >= 1e9) return cut(1e9, 'B');
+      if (abs >= 1e6) return cut(1e6, 'M');
+      if (abs >= 1e4) return cut(1e3, 'k');
+      return fmt(n);
+    }
+    const num = (value) => `<span title="${esc(fmt(Math.round(Number(value) || 0)))}">${short(value)}</span>`;
 
     const unitIcon = (race, code) => (code ? `<span class="unit race-${esc(race)} unit-${esc(code)}"></span>` : '');
 
@@ -437,14 +513,14 @@ IO.register({
         const list = [...bucket.units.values()].filter((u) => u.category === cat).sort((a, b) => b.qty - a.qty);
         if (!list.length) return;
         const sub = list.reduce((s, u) => s + u.qty, 0);
-        rows.push(`<tr class="io-alp-cat"><td>${esc(cat)}</td><td class="num">${fmt(sub)}</td></tr>`);
+        rows.push(`<tr class="io-alp-cat"><td>${esc(cat)}</td><td class="num">${num(sub)}</td></tr>`);
         list.forEach((u) => rows.push(
-          `<tr><td class="unit-cell">${unitIcon(race, u.code)}${esc(u.name)}</td><td class="num">${fmt(u.qty)}</td></tr>`));
+          `<tr><td class="unit-cell">${unitIcon(race, u.code)}${esc(u.name)}</td><td class="num">${num(u.qty)}</td></tr>`));
       });
       return `<table class="data-grid espy">
         <tr><th>Unidade</th><th class="num">Total</th></tr>
         ${rows.join('')}
-        <tr class="total"><td>Total</td><td class="num">${fmt(bucket.total)}</td></tr>
+        <tr class="total"><td>Total</td><td class="num">${num(bucket.total)}</td></tr>
       </table>`;
     }
 
@@ -452,11 +528,11 @@ IO.register({
       const net = (eco.income.gold || 0) - (eco.maintenance || 0);
       return `<table class="data-grid espy">
         <tr><th>Recurso</th><th class="num">Produção/h</th><th class="num">Em stock</th></tr>
-        ${RES.map((r) => `<tr><td>${r.label}</td><td class="num">${fmt(eco.income[r.key] || 0)}</td><td class="num">${fmt(eco.stock[r.key] || 0)}</td></tr>`).join('')}
-        <tr><td>Manutenção do exército</td><td class="num">−${fmt(eco.maintenance)}</td><td class="num">—</td></tr>
-        <tr class="total"><td>Ouro líquido/h</td><td class="num" style="color:${net < 0 ? '#a40000' : '#16610e'}">${fmt(net)}</td><td class="num">—</td></tr>
-        <tr><td>População</td><td class="num">+${fmt(eco.growth)}</td><td class="num">${fmt(eco.population)}</td></tr>
-        <tr class="total"><td>Trabalhadores</td><td class="num">—</td><td class="num">${fmt(eco.workers)}</td></tr>
+        ${RES.map((r) => `<tr><td>${r.label}</td><td class="num">${num(eco.income[r.key])}</td><td class="num">${num(eco.stock[r.key])}</td></tr>`).join('')}
+        <tr><td>Manutenção do exército</td><td class="num">−${num(eco.maintenance)}</td><td class="num">—</td></tr>
+        <tr class="total"><td>Ouro líquido/h</td><td class="num" style="color:${net < 0 ? '#a40000' : '#16610e'}">${num(net)}</td><td class="num">—</td></tr>
+        <tr><td>População</td><td class="num">+${num(eco.growth)}</td><td class="num">${num(eco.population)}</td></tr>
+        <tr class="total"><td>Trabalhadores</td><td class="num">—</td><td class="num">${num(eco.workers)}</td></tr>
       </table>
       <div class="io-alp-when">${members.length} membros somados.</div>
       <div class="io-alp-when">O ouro líquido é o lucro do Império menos a manutenção do exército; juros e imposto de aliança não aparecem nesta tela.</div>`;
@@ -488,11 +564,11 @@ IO.register({
         ${rows.map((r) => `<tr>
           <td>${esc(r.m.name)}${r.m.error ? ` <span style="color:#a40000" title="${esc(r.m.error)}">⚠</span>` : ''}</td>
           <td>${esc(RACES[r.m.race] || '?')}</td>
-          <td class="num">${fmt(r.m.points || 0)}</td>
-          <td class="num">${fmt(r.army)}</td>
-          <td class="num">${fmt(r.res)}</td>
-          <td class="num" style="color:${r.gold < 0 ? '#a40000' : 'inherit'}">${fmt(r.gold)}</td>
-          <td class="num">${fmt(r.pop)}</td>
+          <td class="num">${num(r.m.points)}</td>
+          <td class="num">${num(r.army)}</td>
+          <td class="num">${num(r.res)}</td>
+          <td class="num" style="color:${r.gold < 0 ? '#a40000' : 'inherit'}">${num(r.gold)}</td>
+          <td class="num">${num(r.pop)}</td>
         </tr>`).join('')}
       </table>`;
     }
