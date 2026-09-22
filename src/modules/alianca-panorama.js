@@ -164,7 +164,8 @@ IO.register({
     };
 
     // Preço de treino de cada unidade, lido dos quartéis (só existe para a raça do jogador).
-    const COSTS_KEY = (raceId) => `unit-costs-${raceId}`;
+    // v2: a chave antiga podia ter preços copiados à mão, agora há tabela de origem para as duas raças.
+    const COSTS_KEY = (raceId) => `unit-costs-v2-${raceId}`;
 
     async function fetchOwnCosts() {
       const costs = {};
