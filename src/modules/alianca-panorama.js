@@ -57,13 +57,15 @@ IO.register({
         const row = a.closest('tr') || a.parentElement;
         const raceImg = row && row.querySelector('[class*="stats-race-"]');
         const race = raceImg ? (String(raceImg.className).match(/stats-race-(\d+)/) || [])[1] : '';
-        // A 1ª célula numérica é a posição na lista; a seguinte é a pontuação geral.
-        const numerals = row ? $$(row, 'td.numeral').map((td) => toNumber(td.textContent)) : [];
+        // A 1ª célula numérica sem tooltip é a pontuação geral (as outras trazem números do tooltip).
+        const numerals = row
+          ? $$(row, 'td.numeral').filter((td) => !td.querySelector('.tooltip')).map((td) => toNumber(td.textContent))
+          : [];
         members.push({
           id,
           name: (a.getAttribute('title') || a.textContent || '').trim(),
           race: race || '1',
-          points: numerals[1] || 0,
+          points: numerals[0] || 0,
           online: !!(row && row.querySelector('.online-status-icon.online')),
         });
       });
@@ -105,9 +107,10 @@ IO.register({
       $$(dom, 'table').slice(0, 5).forEach((table) => {
         const rows = $$(table, 'tr');
         const head = normalize(table.textContent).slice(0, 40);
+        // Madeira, ferro, pedra e ouro vêm um por linha, sempre nesta ordem.
         const fillFrom = (target) => {
-          const row = rows.find((tr) => tr.children.length >= 4);
-          if (row) RES.forEach((r, i) => { target[r.key] = exact(row.children[i]); });
+          const values = $$(table, 'span[title]').map((s) => toNumber(s.getAttribute('title')));
+          RES.forEach((r, i) => { target[r.key] = values[i] || 0; });
         };
         if (head.startsWith('recursos')) fillFrom(out.stock);
         else if (head.startsWith('lucro')) fillFrom(out.income);
