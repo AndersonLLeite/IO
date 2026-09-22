@@ -29,6 +29,8 @@ IO.register({
         ['carrinhos de transporte', 'ct', 'Apoio'], ['espiao', 'ks', 'Apoio'],
       ],
     };
+    // Tropas que ficam sempre à vista no simulador; as outras escondem-se atrás do botão.
+    const FEATURED = { 1: ['k3', 'p3', 'c4'], 2: ['k3', 'c4'] }; // Paladinos/Falanges/Balistas · Catafractários/Balistas
     const CATEGORIES = ['Infantaria', 'Arqueiros', 'Cavalaria', 'Cerco', 'Apoio'];
     const RACES = { 1: 'Imperiais', 2: 'Nómades' };
     const RES = [
@@ -276,6 +278,7 @@ IO.register({
       .io-alp td.io-alp-prio { white-space:nowrap; }
       .io-alp td.io-alp-prio button { padding:0 4px; }
       .io-alp tr.io-alp-off td { opacity:.55; }
+      .io-alp tr.io-alp-toggle-row td { text-align:center; background:rgba(0,0,0,.05); }
       .io-alp td label { display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
     `);
 
@@ -398,6 +401,10 @@ IO.register({
       const { rows, perDay, left, income } = simulate(race, byRace);
       const bucket = byRace[race] || { members: 0 };
       const missing = rows.some((r) => r.on && !(r.cost.wood > 0 || r.cost.iron > 0));
+      // Em destaque: as tropas escolhidas para a raça, mais qualquer outra que esteja marcada.
+      const stars = FEATURED[race] || [];
+      const featured = rows.filter((r) => stars.includes(r.code) || r.on);
+      const others = rows.filter((r) => !featured.includes(r));
 
       const row = (r, i) => `<tr class="${r.on ? '' : 'io-alp-off'}">
         <td class="io-alp-prio">
@@ -433,7 +440,11 @@ IO.register({
         <table class="data-grid espy">
           <tr><th>Prio.</th><th>Unidade</th><th class="num">Madeira</th><th class="num">Ferro</th>
             <th class="num">Por dia</th><th class="num">Em ${fmt(Math.round(days))} dias</th></tr>
-          ${rows.map(row).join('')}
+          ${featured.map((r) => row(r, rows.indexOf(r))).join('')}
+          <tr class="io-alp-toggle-row"><td colspan="6">
+            <button type="button" class="button-v2 io-alp-toggle">${sim.showAll ? 'Esconder as outras tropas' : `Mostrar as outras tropas (${others.length})`}</button>
+          </td></tr>
+          ${sim.showAll ? others.map((r) => row(r, rows.indexOf(r))).join('') : ''}
           <tr class="total"><td></td><td>Disponível por dia (após imposto)</td>
             <td class="num">${num(perDay.wood)}</td>
             <td class="num">${num(perDay.iron)}</td>
@@ -452,6 +463,8 @@ IO.register({
         sim.tax[input.dataset.res] = parseFloat(String(input.value).replace(',', '.')) || 0;
         saveSim(); refresh();
       }));
+      const toggle = $(target, '.io-alp-toggle');
+      if (toggle) toggle.addEventListener('click', () => { sim.showAll = !sim.showAll; saveSim(); refresh(); });
       const modeSel = $(target, '.io-alp-mode');
       if (modeSel) modeSel.addEventListener('change', () => { sim.mode = modeSel.value; saveSim(); refresh(); });
       const daysInput = $(target, '.io-alp-days');
