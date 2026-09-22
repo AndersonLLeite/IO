@@ -21,6 +21,7 @@ Só esse script fica ativo no Tampermonkey; ele carrega os módulos sozinho.
 | `soldados-treino` | Soma por tropa das unidades em treino, concluídas e pendentes | dentro da janela "Soldados a treinar" |
 | `calculadora-marcha` | Tempo de marcha e horário de retorno, por tropa, cartografia e velocidade do reino | botão de bússola no menu da direita |
 | `radar-mapa` | Varre o mapa e lista colónias, centros militares e recursos especiais de 10%, com filtros e distância | botão de radar no rodapé |
+| `alianca-panorama` | Soma o exército (por raça) e a economia de todos os membros da aliança | aba "Panorama" na janela da aliança |
 
 ## Estrutura
 

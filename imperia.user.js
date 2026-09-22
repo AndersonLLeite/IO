@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Imperia Suite
 // @namespace    imperia-scripts
-// @version      2.0.1
-// @description  Carregador das ferramentas do Imperia Online (resumo de treinos, calculadora de marcha e radar do mapa).
+// @version      2.1.0
+// @description  Carregador das ferramentas do Imperia Online (resumo de treinos, calculadora de marcha, radar do mapa e panorama da aliança).
 // @author       AndersonLLeite
 // @match        https://*.imperiaonline.org/imperia/game_v5/game/*
 // @grant        none
@@ -16,6 +16,7 @@
 // @require      https://raw.githubusercontent.com/AndersonLLeite/IO/c1fbd6a7e32d97126c9d4dd05a9750abb586d322/src/modules/soldados-treino.js
 // @require      https://raw.githubusercontent.com/AndersonLLeite/IO/c1fbd6a7e32d97126c9d4dd05a9750abb586d322/src/modules/calculadora-marcha.js
 // @require      https://raw.githubusercontent.com/AndersonLLeite/IO/c1fbd6a7e32d97126c9d4dd05a9750abb586d322/src/modules/radar-mapa.js
+// @require      https://raw.githubusercontent.com/AndersonLLeite/IO/PINME/src/modules/alianca-panorama.js
 // ==/UserScript==
 
 (function () {

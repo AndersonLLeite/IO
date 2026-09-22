@@ -360,6 +360,11 @@ IO.register({
       li.innerHTML = '<a href="javascript:;" title="Panorama"><span>Panorama</span></a>';
       strip.appendChild(li);
 
+      // Ao voltar para uma aba do jogo, a nossa deixa de estar marcada.
+      strip.addEventListener('click', (e) => {
+        if (!li.contains(e.target)) li.className = TAB_CLASS;
+      }, true);
+
       li.querySelector('a').addEventListener('click', () => {
         $$(strip, 'li').forEach((other) => {
           other.className = other === li
