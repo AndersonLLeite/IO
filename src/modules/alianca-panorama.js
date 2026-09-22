@@ -59,7 +59,9 @@ IO.register({
         const race = raceImg ? (String(raceImg.className).match(/stats-race-(\d+)/) || [])[1] : '';
         // A 1ª célula numérica sem tooltip é a pontuação geral (as outras trazem números do tooltip).
         const numerals = row
-          ? $$(row, 'td.numeral').filter((td) => !td.querySelector('.tooltip')).map((td) => toNumber(td.textContent))
+          ? [...row.children]
+            .filter((td) => td.classList.contains('numeral') && !td.querySelector('.tooltip'))
+            .map((td) => toNumber(td.textContent))
           : [];
         members.push({
           id,
