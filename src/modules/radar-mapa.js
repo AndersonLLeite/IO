@@ -125,7 +125,10 @@ IO.register({
       const bonus = bonusType
         ? { bonusType: unhtml(bonusType), bonusSize: /^\d+([.,]\d+)?$/.test(size) ? size + '%' : size }
         : {};
-      const resourceName = /^recurso especial/i.test(terrain) ? terrain.replace(/^recurso especial\s*/i, '') : '';
+      // Recursos especiais aparecem como "Recurso especial X" e, nos de 10%, "Campo rico em Recurso especial X".
+      const resMatch = terrain.match(/recurso especial\s+(.+)$/i);
+      const resourceName = resMatch ? resMatch[1].trim() : '';
+      const richField = /campo rico/i.test(terrain);
       const userName = pickKey(t, (k) => k.includes('nome') && (k.includes('utilizador') || k.includes('usuario')));
       const ownerName = pickKey(t, (k) => k.startsWith('dono'));
       const alliance = unhtml(pickKey(t, (k) => k.startsWith('alian')) || '');
@@ -144,7 +147,7 @@ IO.register({
         return { ...base, kind: 'military', name: terrain, alliance };
       }
       if (resourceName && bonus.bonusSize === RESOURCE_BONUS) {
-        return { ...base, kind: 'resource', name: resourceName, resourceName, terrain, ...bonus };
+        return { ...base, kind: 'resource', name: resourceName, resourceName, richField, terrain, ...bonus };
       }
       return null;
     }
@@ -387,34 +390,56 @@ IO.register({
       const found = [];
       const owners = { ...((state.scan && state.scan.owners) || {}) };
       const scannedBlocks = new Set();
-      let errors = 0;
+      const missing = []; // blocos pedidos que o servidor não devolveu (para reidos no fim)
+      let errors = 0, aborted = false;
+
+      // Guarda só os blocos que voltaram mesmo; os que faltaram ficam para uma segunda tentativa.
+      const readChunk = (chunk, json) => {
+        found.push(...parseBlocks(json, owners));
+        const back = new Set((json.blocks || []).map((b) => String(b.id)));
+        chunk.forEach((b) => (back.has(String(b)) ? scannedBlocks.add(String(b)) : missing.push(b)));
+      };
+      const progress = (done) => {
+        if (!document.contains(bar)) return;
+        $(bar, 'b').style.transform = `scaleX(${done / ids.length})`;
+        $(bar, 'span').textContent = `${Math.round(done / ids.length * 100)}% · ${fmt(found.length)} objetos`;
+      };
 
       for (let i = 0; i < ids.length; i += perRequest) {
         if (state.cancel) break;
         const chunk = ids.slice(i, i + perRequest);
         try {
-          const json = await fetchBlocks(chunk);
-          found.push(...parseBlocks(json, owners));
-          chunk.forEach((b) => scannedBlocks.add(String(b)));
+          readChunk(chunk, await fetchBlocks(chunk));
+          errors = 0;
         } catch (err) {
           errors++;
-          if (errors >= 3) { setScanInfo('Varredura interrompida: o servidor recusou várias requisições seguidas (' + err.message + ').'); break; }
+          if (errors >= 3) { setScanInfo('Varredura incompleta: o servidor recusou várias requisições seguidas (' + err.message + ').'); aborted = true; break; }
           await sleep(2000);
+          i -= perRequest; // repete o mesmo trecho depois da pausa
+          continue;
         }
-        const done = Math.min(ids.length, i + perRequest);
-        if (document.contains(bar)) {
-          $(bar, 'b').style.transform = `scaleX(${done / ids.length})`;
-          $(bar, 'span').textContent = `${Math.round(done / ids.length * 100)}% · ${fmt(found.length)} objetos`;
-        }
+        progress(Math.min(ids.length, i + perRequest));
         await sleep(REQUEST_DELAY_MS);
       }
+
+      // Segunda passagem só nos blocos que o servidor não devolveu à primeira.
+      if (!state.cancel && !aborted && missing.length) {
+        const retry = missing.splice(0);
+        setScanInfo(`A reler ${fmt(retry.length)} blocos que o servidor não devolveu…`);
+        for (let i = 0; i < retry.length; i += perRequest) {
+          if (state.cancel) break;
+          try { readChunk(retry.slice(i, i + perRequest), await fetchBlocks(retry.slice(i, i + perRequest))); } catch (err) { /* deixa por ler */ }
+          await sleep(REQUEST_DELAY_MS);
+        }
+      }
+      progress(ids.length);
 
       // mescla: substitui só os blocos que foram lidos agora (o servidor devolve o id do bloco como texto)
       const previous = ((state.scan && state.scan.items) || [])
         .filter((it) => KINDS[it.kind] && (it.kind !== 'resource' || it.bonusSize === RESOURCE_BONUS));
       const items = previous.filter((it) => !scannedBlocks.has(String(it.block))).concat(found);
       const unique = new Map(items.map((it) => [it.kind + ':' + it.id + ':' + it.x + ':' + it.y, it]));
-      state.scan = { timestamp: Date.now(), base, radius, items: [...unique.values()], owners, partial: state.cancel };
+      state.scan = { timestamp: Date.now(), base, radius, items: [...unique.values()], owners, partial: state.cancel || aborted || missing.length > 0 };
       await IO.store.db.set(DB_RECORD, state.scan).catch(() => {});
 
       state.scanning = false;
@@ -471,7 +496,7 @@ IO.register({
       const s = state.scan;
       const when = new Date(s.timestamp).toLocaleString('pt-PT');
       const area = s.radius > 0 ? `raio ${s.radius} a partir do quadrante ${quadrant(s.base.x)}:${quadrant(s.base.y)}` : 'mapa inteiro';
-      setScanInfo(`Última varredura: ${when} · ${area} · ${fmt(s.items.length)} objetos guardados${s.partial ? ' · incompleta (cancelada)' : ''}`);
+      setScanInfo(`Última varredura: ${when} · ${area} · ${fmt(s.items.length)} objetos guardados${s.partial ? ' · ⚠ incompleta (alguns blocos não foram lidos)' : ''}`);
     }
 
     function renderFilterOptions() {
@@ -552,7 +577,7 @@ IO.register({
         let sub = '';
         if (it.kind === 'colony') sub = it.resourceName ? `Recurso ${esc(it.resourceName)}` : esc(it.terrain);
         if (it.bonusType) sub = `${sub ? sub + ' · ' : ''}<span class="io-rd-bonus">${esc(it.bonusSize)}</span> ${esc(it.bonusType)}`;
-        if (it.kind === 'resource') sub = `<span class="io-rd-bonus">${esc(it.bonusSize)}</span> ${esc(it.bonusType || '')}`;
+        if (it.kind === 'resource') sub = `${it.richField ? 'Campo rico · ' : ''}<span class="io-rd-bonus">${esc(it.bonusSize)}</span> ${esc(it.bonusType || '')}`;
 
         const canSpy = it.kind === 'colony' && it.acs.includes(ACT.spyColony);
         const actions = [
