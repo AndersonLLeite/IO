@@ -144,7 +144,11 @@ IO.register({
           alliance, raceId: o.race_id || 0, terrain, resourceName, ...bonus };
       }
       if (/^centro militar/i.test(terrain)) {
-        return { ...base, kind: 'military', name: terrain, alliance };
+        // O jogo identifica cada CM pelo id sem o prefixo "castle" (ex.: castle380 → 380, castle6365_306 → 6365_306);
+        // o "número" visível é o último grupo de dígitos. Um CM destruído e reconstruído recebe número novo.
+        const cid = String(o.id).replace(/^castle/i, '');
+        const numMatch = String(o.id).match(/(\d+)(?!.*\d)/);
+        return { ...base, kind: 'military', name: terrain, alliance, cid, number: numMatch ? numMatch[1] : cid };
       }
       if (resourceName && bonus.bonusSize === RESOURCE_BONUS) {
         return { ...base, kind: 'resource', name: resourceName, resourceName, richField, terrain, ...bonus };
@@ -307,6 +311,22 @@ IO.register({
 
           <h3 class="io-rd-results-title">Resultados</h3>
           <div class="io-rd-results"></div>
+
+          <h3>Monitor de Centros Militares</h3>
+          <div class="io-rd-monitor">
+            <div class="io-rd-bar">
+              <label class="io-rd-field"><input type="checkbox" class="io-rd-mon-on"> Monitorizar (a cada ${MON_MIN_MIN}–${MON_MAX_MIN} min)</label>
+              <button type="button" class="button-v2 io-rd-mon-now">Verificar agora</button>
+              <button type="button" class="io-rd-link io-rd-mon-edit">castelos…</button>
+            </div>
+            <div class="io-rd-mon-status io-rd-muted" style="margin:3px 0"></div>
+            <div class="io-rd-mon-castles" hidden style="margin:4px 0">
+              <textarea class="io-rd-mon-castles-text" rows="9" style="width:230px;vertical-align:top"></textarea>
+              <button type="button" class="button-v2 io-rd-mon-castles-save">Guardar castelos</button>
+              <span class="io-rd-muted">um por linha: <b>Nome qx:qy</b></span>
+            </div>
+            <div class="io-rd-mon-results"></div>
+          </div>
         </div>`);
     }
 
@@ -332,6 +352,7 @@ IO.register({
         state.prefs.manualBase = null; savePrefs(state.prefs); renderBase(); renderResults();
       });
       $(root, '.io-rd-scan').addEventListener('click', () => (state.scanning ? (state.cancel = true) : runScan()));
+      bindMonitor();
       $(root, '.io-rd-confirm-yes').addEventListener('click', () => { fullScanConfirmed = true; runScan(); });
       $(root, '.io-rd-confirm-no').addEventListener('click', hideFullScanConfirm);
 
@@ -481,7 +502,7 @@ IO.register({
     // ---------- renderização ----------
     function setScanInfo(text) { const el = state.root && $(state.root, '.io-rd-scaninfo'); if (el) el.textContent = text; }
 
-    function renderAll() { renderBase(); renderScanInfo(); renderFilterOptions(); renderResults(); }
+    function renderAll() { renderBase(); renderScanInfo(); renderFilterOptions(); renderResults(); renderMonitor(); }
 
     function renderBase() {
       const root = state.root; if (!root) return;
@@ -613,6 +634,163 @@ IO.register({
           </span>
         </div>`;
     }
+
+    // ---------- monitor de Centros Militares ----------
+    const MONITOR_KEY = 'cm-monitor';
+    const MONITOR_ON_KEY = 'io_cm_monitor_on';
+    const MON_RADIUS = 100;
+    const MON_MIN_MIN = 10, MON_MAX_MIN = 15; // intervalo aleatório entre verificações
+    // Castelos por reino (quadrantes como na régua). Servem de valor inicial; podem ser editados na janela.
+    const DEFAULT_CASTLES = {
+      312: [
+        { label: 'Noroeste', qx: 85, qy: 85 }, { label: 'Norte', qx: 250, qy: 85 }, { label: 'Nordeste', qx: 420, qy: 85 },
+        { label: 'Oeste', qx: 85, qy: 250 }, { label: 'Central', qx: 250, qy: 250 }, { label: 'Leste', qx: 420, qy: 250 },
+        { label: 'Sudoeste', qx: 85, qy: 415 }, { label: 'Sul', qx: 250, qy: 415 }, { label: 'Sudeste', qx: 415, qy: 415 },
+      ],
+    };
+
+    // O reino é identificado pelo parâmetro realm da página (link de convite / batalhas do dia).
+    function realmId() {
+      const h = document.documentElement.innerHTML;
+      const m = h.match(/register\.php\?realm=(\d+)/) || h.match(/showBattleOfDay\((\d+)/);
+      return m ? m[1] : '0';
+    }
+
+    const monitor = {
+      data: null,
+      on: !!IO.store.local.get(MONITOR_ON_KEY, { on: false }).on,
+      realm: realmId(),
+      timer: null, running: false, nextAt: null, status: '',
+    };
+
+    async function monitorLoad() {
+      if (!monitor.data) monitor.data = (await IO.store.db.get(MONITOR_KEY)) || { realms: {} };
+      return monitor.data;
+    }
+    function realmData(data) {
+      const r = monitor.realm;
+      if (!data.realms[r]) data.realms[r] = { castles: (DEFAULT_CASTLES[r] || []).slice(), cms: {} };
+      if (!data.realms[r].castles.length && DEFAULT_CASTLES[r]) data.realms[r].castles = DEFAULT_CASTLES[r].slice();
+      return data.realms[r];
+    }
+
+    const castlesToText = (castles) => castles.map((c) => `${c.label} ${c.qx}:${c.qy}`).join('\n');
+    function parseCastles(text) {
+      return String(text).split('\n').map((line) => {
+        const m = line.match(/(\d+)\s*[:x,]\s*(\d+)\s*$/);
+        if (!m) return null;
+        const label = line.slice(0, m.index).replace(/[:\-–\s]+$/, '').trim() || `${m[1]}:${m[2]}`;
+        return { label, qx: +m[1], qy: +m[2] };
+      }).filter(Boolean);
+    }
+
+    function monitorStatus(text) { monitor.status = text; renderMonitor(); }
+
+    async function monitorCycle() {
+      if (monitor.running || state.scanning) return; // não concorre com uma varredura manual
+      monitor.running = true;
+      renderMonitor();
+      try {
+        const data = await monitorLoad();
+        const rd = realmData(data);
+        if (!rd.castles.length) { monitorStatus('Sem castelos definidos para este reino. Abra "castelos…" e cole as coordenadas.'); return; }
+        const blockSet = new Set();
+        rd.castles.forEach((c) => blocksInRadius({ x: fromQuadrant(c.qx), y: fromQuadrant(c.qy) }, MON_RADIUS).forEach((b) => blockSet.add(b)));
+        const ids = [...blockSet];
+        const owners = {};
+        const found = [];
+        let errors = 0;
+        for (let i = 0; i < ids.length; i += BLOCKS_PER_REQUEST) {
+          try { found.push(...parseBlocks(await fetchBlocks(ids.slice(i, i + BLOCKS_PER_REQUEST)), owners)); errors = 0; }
+          catch (e) { if (++errors >= 3) { monitorStatus('Verificação falhada: o servidor recusou várias requisições.'); return; } await sleep(1500); }
+          await sleep(REQUEST_DELAY_MS);
+        }
+        const now = Date.now();
+        const nearest = (it) => {
+          let best = '', bd = Infinity;
+          rd.castles.forEach((c) => { const d = Math.hypot(fromQuadrant(c.qx) - it.x, fromQuadrant(c.qy) - it.y); if (d < bd) { bd = d; best = c.label; } });
+          return best;
+        };
+        let novos = 0;
+        found.filter((it) => it.kind === 'military').forEach((it) => {
+          const key = it.cid || String(it.id);
+          const prev = rd.cms[key];
+          if (!prev) {
+            rd.cms[key] = { cid: key, number: it.number || key, terrain: it.name, alliance: it.alliance || '', x: it.x, y: it.y, castle: nearest(it), firstSeen: now, lastSeen: now };
+            novos++;
+          } else {
+            prev.lastSeen = now; // firstSeen nunca muda
+            prev.alliance = it.alliance || prev.alliance; prev.x = it.x; prev.y = it.y; prev.castle = nearest(it);
+          }
+        });
+        rd.lastRun = now;
+        await IO.store.db.set(MONITOR_KEY, data).catch(() => {});
+        monitor.status = `Última verificação: ${new Date(now).toLocaleString('pt-PT')} · ${novos} novo(s) · ${Object.keys(rd.cms).length} CMs conhecidos`;
+      } finally {
+        monitor.running = false;
+        renderMonitor();
+      }
+    }
+
+    function scheduleMonitor() {
+      clearTimeout(monitor.timer);
+      if (!monitor.on) { monitor.nextAt = null; renderMonitor(); return; }
+      const ms = (MON_MIN_MIN + Math.random() * (MON_MAX_MIN - MON_MIN_MIN)) * 60000;
+      monitor.nextAt = Date.now() + ms;
+      monitor.timer = setTimeout(async () => { await monitorCycle(); scheduleMonitor(); }, ms);
+      renderMonitor();
+    }
+
+    function setMonitorOn(on) {
+      monitor.on = on;
+      IO.store.local.set(MONITOR_ON_KEY, { on });
+      if (on) { monitorCycle().then(scheduleMonitor); } else { clearTimeout(monitor.timer); monitor.nextAt = null; renderMonitor(); }
+    }
+
+    function renderMonitor() {
+      const root = state.root; if (!root || !document.contains(root)) return;
+      const box = $(root, '.io-rd-monitor'); if (!box) return;
+      const rd = (monitor.data && monitor.data.realms[monitor.realm]) || { castles: DEFAULT_CASTLES[monitor.realm] || [], cms: {} };
+      const chk = $(box, '.io-rd-mon-on'); if (chk) chk.checked = monitor.on;
+      const nextTxt = monitor.running ? 'a verificar…' : (monitor.on && monitor.nextAt ? 'próxima ~' + new Date(monitor.nextAt).toLocaleTimeString('pt-PT').slice(0, 5) : 'desligado');
+      $(box, '.io-rd-mon-status').textContent = `Reino ${monitor.realm} · ${Object.keys(rd.cms).length} CMs · ${nextTxt}${monitor.status ? ' · ' + monitor.status : ''}`;
+
+      const cms = Object.values(rd.cms).sort((a, b) => b.firstSeen - a.firstSeen);
+      const results = $(box, '.io-rd-mon-results');
+      if (!cms.length) { results.innerHTML = '<div class="io-rd-empty">Nenhum Centro Militar registado ainda neste reino.</div>'; return; }
+      const when = (t) => new Date(t).toLocaleString('pt-PT');
+      results.innerHTML = `<table class="data-grid espy">
+        <tr><th>Nº</th><th>Castelo</th><th>Aliança</th><th>Quadrante</th><th>1ª vez visto</th><th>Última vez</th></tr>
+        ${cms.map((c) => `<tr>
+          <td>${esc(c.number)}</td><td>${esc(c.castle || '—')}</td><td>${esc(c.alliance || '—')}</td>
+          <td class="io-rd-center">${quadrant(c.x)}:${quadrant(c.y)}</td>
+          <td>${esc(when(c.firstSeen))}</td><td class="io-rd-muted">${esc(when(c.lastSeen))}</td>
+        </tr>`).join('')}
+      </table>`;
+    }
+
+    function bindMonitor() {
+      const box = $(state.root, '.io-rd-monitor'); if (!box) return;
+      $(box, '.io-rd-mon-on').addEventListener('change', (e) => setMonitorOn(e.target.checked));
+      $(box, '.io-rd-mon-now').addEventListener('click', () => monitorCycle());
+      $(box, '.io-rd-mon-edit').addEventListener('click', () => {
+        const ed = $(box, '.io-rd-mon-castles'); ed.hidden = !ed.hidden;
+        if (!ed.hidden) {
+          const rd = (monitor.data && monitor.data.realms[monitor.realm]) || { castles: DEFAULT_CASTLES[monitor.realm] || [] };
+          $(box, '.io-rd-mon-castles-text').value = castlesToText(rd.castles);
+        }
+      });
+      $(box, '.io-rd-mon-castles-save').addEventListener('click', async () => {
+        const castles = parseCastles($(box, '.io-rd-mon-castles-text').value);
+        const data = await monitorLoad();
+        realmData(data).castles = castles;
+        await IO.store.db.set(MONITOR_KEY, data).catch(() => {});
+        $(box, '.io-rd-mon-castles').hidden = true;
+        monitorStatus(`${castles.length} castelos guardados para o reino ${monitor.realm}.`);
+      });
+    }
+
+    monitorLoad().then(() => { renderMonitor(); if (monitor.on) scheduleMonitor(); });
 
     IO.ui.addFooterButton({ className: BUTTON_CLASS, title: WINDOW_TITLE, html: RADAR_SVG, onClick: openWindow });
   },
