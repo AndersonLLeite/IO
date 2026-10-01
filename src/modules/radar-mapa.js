@@ -39,7 +39,7 @@ IO.register({
     // ações do menu do mapa (json/map_menu_actions.php) que a ferramenta expõe
     const ACT = { spyColony: 17 };
 
-    const DEFAULT_PREFS = { radius: 100, kind: '', text: '', resource: '', bonus: '', maxDist: '', sort: 'dist', manualBase: null };
+    const DEFAULT_PREFS = { radius: 100, kind: '', text: '', resource: '', bonus: '', maxDist: '', sort: 'dist', manualBase: null, tab: 'scan' };
     const loadPrefs = () => IO.store.local.get(PREFS_KEY, DEFAULT_PREFS);
     const savePrefs = (p) => IO.store.local.set(PREFS_KEY, p);
 
@@ -212,6 +212,12 @@ IO.register({
       .footer-links li.${BUTTON_CLASS}:hover svg { transform:scale(1.1); filter:drop-shadow(0 0 4px rgba(255,220,140,.8)) drop-shadow(0 2px 2px rgba(0,0,0,.55)); }
 
       .io-rd { width:760px; padding:10px 14px 6px; font:12px arial, verdana, sans-serif; color:#170e11; }
+      .io-rd-tabs { display:flex; gap:4px; border-bottom:2px solid #a8864a; margin-bottom:8px; }
+      .io-rd-tab { padding:5px 14px; border:1px solid #a8864a; border-bottom:0; border-radius:4px 4px 0 0; margin-bottom:-2px;
+        background:linear-gradient(#e7d4a6,#cdb074); color:#4a3410; font:bold 12px arial, verdana, sans-serif; cursor:pointer; }
+      .io-rd-tab:hover { background:linear-gradient(#f1e0b6,#d8bd83); }
+      .io-rd-tab.active { background:#fffdf6; color:#7a1f0e; border-bottom:2px solid #fffdf6; }
+      .io-rd-pane[hidden] { display:none; }
       .io-rd h3 { margin:10px 0 6px; font-size:13px; font-weight:bold; color:#3b2a14; border-bottom:1px solid #b09a6e; padding-bottom:3px; }
       .io-rd h3:first-child { margin-top:0; }
       .io-rd-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; }
@@ -278,8 +284,15 @@ IO.register({
 
     function windowHtml() {
       const p = state.prefs;
+      const tab = state.prefs.tab === 'monitor' ? 'monitor' : 'scan';
       return IO.ui.windowFrame(`
         <div class="io-rd">
+          <div class="io-rd-tabs">
+            <button type="button" class="io-rd-tab${tab === 'scan' ? ' active' : ''}" data-tab="scan">Varredura do mapa</button>
+            <button type="button" class="io-rd-tab${tab === 'monitor' ? ' active' : ''}" data-tab="monitor">Monitor de CMs</button>
+          </div>
+
+          <div class="io-rd-pane io-rd-pane-scan"${tab === 'scan' ? '' : ' hidden'}>
           <h3>Varredura</h3>
           <div class="io-rd-bar">
             <span class="io-rd-field" title="Quadrante do Império, como na régua do Mapa Global">Meu Império:
@@ -311,7 +324,9 @@ IO.register({
 
           <h3 class="io-rd-results-title">Resultados</h3>
           <div class="io-rd-results"></div>
+          </div>
 
+          <div class="io-rd-pane io-rd-pane-monitor"${tab === 'monitor' ? '' : ' hidden'}>
           <h3>Monitor de Centros Militares</h3>
           <div class="io-rd-monitor">
             <div class="io-rd-bar">
@@ -326,6 +341,7 @@ IO.register({
               <span class="io-rd-muted">um por linha: <b>Nome qx:qy</b></span>
             </div>
             <div class="io-rd-mon-results"></div>
+          </div>
           </div>
         </div>`);
     }
@@ -357,6 +373,14 @@ IO.register({
       $(root, '.io-rd-confirm-no').addEventListener('click', hideFullScanConfirm);
 
       root.addEventListener('click', (e) => {
+        const tabBtn = e.target.closest('.io-rd-tab');
+        if (tabBtn) {
+          state.prefs.tab = tabBtn.dataset.tab; savePrefs(state.prefs);
+          $$(root, '.io-rd-tab').forEach((b) => b.classList.toggle('active', b === tabBtn));
+          $(root, '.io-rd-pane-scan').hidden = tabBtn.dataset.tab !== 'scan';
+          $(root, '.io-rd-pane-monitor').hidden = tabBtn.dataset.tab !== 'monitor';
+          return;
+        }
         const kindBtn = e.target.closest('.io-rd-kind');
         if (kindBtn) { state.prefs.kind = kindBtn.dataset.kind; savePrefs(state.prefs); state.page = 0; renderResults(); return; }
         const sortTh = e.target.closest('.io-rd-sort');
