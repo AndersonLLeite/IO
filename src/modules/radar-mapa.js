@@ -332,14 +332,8 @@ IO.register({
             <div class="io-rd-bar">
               <label class="io-rd-field"><input type="checkbox" class="io-rd-mon-on"> Monitorizar (a cada ${MON_MIN_MIN}–${MON_MAX_MIN} min)</label>
               <button type="button" class="button-v2 io-rd-mon-now">Verificar agora</button>
-              <button type="button" class="io-rd-link io-rd-mon-edit">castelos…</button>
             </div>
             <div class="io-rd-mon-status io-rd-muted" style="margin:3px 0"></div>
-            <div class="io-rd-mon-castles" hidden style="margin:4px 0">
-              <textarea class="io-rd-mon-castles-text" rows="9" style="width:230px;vertical-align:top"></textarea>
-              <button type="button" class="button-v2 io-rd-mon-castles-save">Guardar castelos</button>
-              <span class="io-rd-muted">um por linha: <b>Nome qx:qy</b></span>
-            </div>
             <div class="io-rd-mon-results"></div>
           </div>
           </div>
@@ -664,14 +658,12 @@ IO.register({
     const MONITOR_ON_KEY = 'io_cm_monitor_on';
     const MON_RADIUS = 100;
     const MON_MIN_MIN = 10, MON_MAX_MIN = 15; // intervalo aleatório entre verificações
-    // Castelos por reino (quadrantes como na régua). Servem de valor inicial; podem ser editados na janela.
-    const DEFAULT_CASTLES = {
-      312: [
-        { label: 'Noroeste', qx: 85, qy: 85 }, { label: 'Norte', qx: 250, qy: 85 }, { label: 'Nordeste', qx: 420, qy: 85 },
-        { label: 'Oeste', qx: 85, qy: 250 }, { label: 'Central', qx: 250, qy: 250 }, { label: 'Leste', qx: 420, qy: 250 },
-        { label: 'Sudoeste', qx: 85, qy: 415 }, { label: 'Sul', qx: 250, qy: 415 }, { label: 'Sudeste', qx: 415, qy: 415 },
-      ],
-    };
+    // Os 9 castelos são fixos (quadrantes como na régua), iguais em qualquer reino.
+    const CASTLES = [
+      { label: 'Noroeste', qx: 85, qy: 85 }, { label: 'Norte', qx: 250, qy: 85 }, { label: 'Nordeste', qx: 420, qy: 85 },
+      { label: 'Oeste', qx: 85, qy: 250 }, { label: 'Central', qx: 250, qy: 250 }, { label: 'Leste', qx: 420, qy: 250 },
+      { label: 'Sudoeste', qx: 85, qy: 415 }, { label: 'Sul', qx: 250, qy: 415 }, { label: 'Sudeste', qx: 415, qy: 415 },
+    ];
 
     // O reino é identificado pelo parâmetro realm da página (link de convite / batalhas do dia).
     function realmId() {
@@ -693,19 +685,8 @@ IO.register({
     }
     function realmData(data) {
       const r = monitor.realm;
-      if (!data.realms[r]) data.realms[r] = { castles: (DEFAULT_CASTLES[r] || []).slice(), cms: {} };
-      if (!data.realms[r].castles.length && DEFAULT_CASTLES[r]) data.realms[r].castles = DEFAULT_CASTLES[r].slice();
+      if (!data.realms[r]) data.realms[r] = { cms: {} };
       return data.realms[r];
-    }
-
-    const castlesToText = (castles) => castles.map((c) => `${c.label} ${c.qx}:${c.qy}`).join('\n');
-    function parseCastles(text) {
-      return String(text).split('\n').map((line) => {
-        const m = line.match(/(\d+)\s*[:x,]\s*(\d+)\s*$/);
-        if (!m) return null;
-        const label = line.slice(0, m.index).replace(/[:\-–\s]+$/, '').trim() || `${m[1]}:${m[2]}`;
-        return { label, qx: +m[1], qy: +m[2] };
-      }).filter(Boolean);
     }
 
     function monitorStatus(text) { monitor.status = text; renderMonitor(); }
@@ -717,9 +698,8 @@ IO.register({
       try {
         const data = await monitorLoad();
         const rd = realmData(data);
-        if (!rd.castles.length) { monitorStatus('Sem castelos definidos para este reino. Abra "castelos…" e cole as coordenadas.'); return; }
         const blockSet = new Set();
-        rd.castles.forEach((c) => blocksInRadius({ x: fromQuadrant(c.qx), y: fromQuadrant(c.qy) }, MON_RADIUS).forEach((b) => blockSet.add(b)));
+        CASTLES.forEach((c) => blocksInRadius({ x: fromQuadrant(c.qx), y: fromQuadrant(c.qy) }, MON_RADIUS).forEach((b) => blockSet.add(b)));
         const ids = [...blockSet];
         const owners = {};
         const found = [];
@@ -732,7 +712,7 @@ IO.register({
         const now = Date.now();
         const nearest = (it) => {
           let best = '', bd = Infinity;
-          rd.castles.forEach((c) => { const d = Math.hypot(fromQuadrant(c.qx) - it.x, fromQuadrant(c.qy) - it.y); if (d < bd) { bd = d; best = c.label; } });
+          CASTLES.forEach((c) => { const d = Math.hypot(fromQuadrant(c.qx) - it.x, fromQuadrant(c.qy) - it.y); if (d < bd) { bd = d; best = c.label; } });
           return best;
         };
         let novos = 0;
@@ -774,7 +754,7 @@ IO.register({
     function renderMonitor() {
       const root = state.root; if (!root || !document.contains(root)) return;
       const box = $(root, '.io-rd-monitor'); if (!box) return;
-      const rd = (monitor.data && monitor.data.realms[monitor.realm]) || { castles: DEFAULT_CASTLES[monitor.realm] || [], cms: {} };
+      const rd = (monitor.data && monitor.data.realms[monitor.realm]) || { cms: {} };
       const chk = $(box, '.io-rd-mon-on'); if (chk) chk.checked = monitor.on;
       const nextTxt = monitor.running ? 'a verificar…' : (monitor.on && monitor.nextAt ? 'próxima ~' + new Date(monitor.nextAt).toLocaleTimeString('pt-PT').slice(0, 5) : 'desligado');
       $(box, '.io-rd-mon-status').textContent = `Reino ${monitor.realm} · ${Object.keys(rd.cms).length} CMs · ${nextTxt}${monitor.status ? ' · ' + monitor.status : ''}`;
@@ -797,21 +777,6 @@ IO.register({
       const box = $(state.root, '.io-rd-monitor'); if (!box) return;
       $(box, '.io-rd-mon-on').addEventListener('change', (e) => setMonitorOn(e.target.checked));
       $(box, '.io-rd-mon-now').addEventListener('click', () => monitorCycle());
-      $(box, '.io-rd-mon-edit').addEventListener('click', () => {
-        const ed = $(box, '.io-rd-mon-castles'); ed.hidden = !ed.hidden;
-        if (!ed.hidden) {
-          const rd = (monitor.data && monitor.data.realms[monitor.realm]) || { castles: DEFAULT_CASTLES[monitor.realm] || [] };
-          $(box, '.io-rd-mon-castles-text').value = castlesToText(rd.castles);
-        }
-      });
-      $(box, '.io-rd-mon-castles-save').addEventListener('click', async () => {
-        const castles = parseCastles($(box, '.io-rd-mon-castles-text').value);
-        const data = await monitorLoad();
-        realmData(data).castles = castles;
-        await IO.store.db.set(MONITOR_KEY, data).catch(() => {});
-        $(box, '.io-rd-mon-castles').hidden = true;
-        monitorStatus(`${castles.length} castelos guardados para o reino ${monitor.realm}.`);
-      });
     }
 
     monitorLoad().then(() => { renderMonitor(); if (monitor.on) scheduleMonitor(); });
