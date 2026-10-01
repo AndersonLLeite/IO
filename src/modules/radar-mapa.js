@@ -274,7 +274,7 @@ IO.register({
       state.root = $(win.box, '.io-rd');
       bindWindow();
 
-      if (!state.scan) state.scan = await IO.store.db.get(DB_RECORD);
+      if (!state.scan) state.scan = await IO.store.db.get(DB_RECORD + '-' + realmId());
       renderAll();
       loadMapImages().then(() => renderResults());
       if (!state.detectedBase) {
@@ -479,7 +479,7 @@ IO.register({
       const items = previous.filter((it) => !scannedBlocks.has(String(it.block))).concat(found);
       const unique = new Map(items.map((it) => [it.kind + ':' + it.id + ':' + it.x + ':' + it.y, it]));
       state.scan = { timestamp: Date.now(), base, radius, items: [...unique.values()], owners, partial: state.cancel || aborted || missing.length > 0 };
-      await IO.store.db.set(DB_RECORD, state.scan).catch(() => {});
+      await IO.store.db.set(DB_RECORD + '-' + realmId(), state.scan).catch(() => {});
 
       state.scanning = false;
       if (document.contains(btn)) { btn.textContent = 'Varrer mapa'; bar.hidden = true; }
@@ -716,20 +716,25 @@ IO.register({
           return best;
         };
         let novos = 0;
+        const seen = new Set();
         found.filter((it) => it.kind === 'military').forEach((it) => {
           const key = it.cid || String(it.id);
+          seen.add(key);
           const prev = rd.cms[key];
           if (!prev) {
             rd.cms[key] = { cid: key, number: it.number || key, terrain: it.name, alliance: it.alliance || '', x: it.x, y: it.y, castle: nearest(it), firstSeen: now, lastSeen: now };
             novos++;
           } else {
-            prev.lastSeen = now; // firstSeen nunca muda
+            prev.lastSeen = now; // firstSeen nunca muda enquanto o CM existir
             prev.alliance = it.alliance || prev.alliance; prev.x = it.x; prev.y = it.y; prev.castle = nearest(it);
           }
         });
+        // CMs que já não estão no mapa (destruídos) saem da lista.
+        let removidos = 0;
+        Object.keys(rd.cms).forEach((key) => { if (!seen.has(key)) { delete rd.cms[key]; removidos++; } });
         rd.lastRun = now;
         await IO.store.db.set(MONITOR_KEY, data).catch(() => {});
-        monitor.status = `Última verificação: ${new Date(now).toLocaleString('pt-PT')} · ${novos} novo(s) · ${Object.keys(rd.cms).length} CMs conhecidos`;
+        monitor.status = `Última verificação: ${new Date(now).toLocaleString('pt-PT')} · ${novos} novo(s) · ${removidos} removido(s) · ${Object.keys(rd.cms).length} CMs`;
       } finally {
         monitor.running = false;
         renderMonitor();
