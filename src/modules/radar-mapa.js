@@ -770,7 +770,7 @@ IO.register({
         if (!fetchFailed) {
           rd.castles = {};
           found.filter((it) => it.kind === 'castle').forEach((it) => {
-            rd.castles[it.cid] = { cid: it.cid, name: it.name, alliance: it.alliance || '', x: it.x, y: it.y, region: nearest(it), lastSeen: now };
+            rd.castles[it.cid] = { cid: it.cid, name: it.name, alliance: it.alliance || '', x: it.x, y: it.y, region: nearest(it), attackable: (it.acs || []).includes(18), lastSeen: now };
           });
         }
         rd.lastRun = now;
@@ -814,7 +814,9 @@ IO.register({
         ${castles.map((c) => `<tr>
           <td>${esc(c.region || '—')}</td><td>${esc(c.name)}</td><td>${esc(c.alliance || '—')}</td>
           <td class="io-rd-center">${quadrant(c.x)}:${quadrant(c.y)}</td><td class="io-rd-muted">${esc(when(c.lastSeen))}</td>
-          <td class="io-rd-actions"><button type="button" disabled title="Sem função">Atacar</button><button type="button" disabled title="Sem função">Massa</button></td>
+          <td class="io-rd-actions">${c.attackable
+            ? `<button type="button" data-atk-native="${esc(c.cid)}" title="Abrir a tela de ataque do jogo">Atacar</button>`
+            : '<button type="button" disabled title="Só disponível dentro de um domínio da aliança">Atacar</button>'}<button type="button" disabled title="Sem função">Massa</button></td>
         </tr>`).join('')}
       </table><h3>Centros Militares</h3>` : '';
       if (!cms.length) { results.innerHTML = castlesHtml + '<div class="io-rd-empty">Nenhum Centro Militar registado ainda neste reino.</div>'; return; }
