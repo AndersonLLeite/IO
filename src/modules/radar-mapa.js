@@ -221,6 +221,9 @@ IO.register({
       .io-rd-atk { border:1px solid #a8864a; background:rgba(255,236,180,.55); padding:6px 8px; margin:4px 0; }
       .io-rd-atk[hidden] { display:none; }
       .io-rd-atk-head { border-bottom:1px solid #c3b18b; padding-bottom:3px; margin-bottom:3px; }
+      .io-rd-atk-log { margin-top:4px; background:#f6efdd; border:1px solid #c8b184; padding:4px 6px; max-height:200px;
+        overflow:auto; white-space:pre-wrap; font:11px/1.45 Consolas, monospace; }
+      .io-rd-atk-log .io-rd-ok { color:#1f6b22; } .io-rd-atk-log .io-rd-err { color:#a3160a; }
       .io-rd h3 { margin:10px 0 6px; font-size:13px; font-weight:bold; color:#3b2a14; border-bottom:1px solid #b09a6e; padding-bottom:3px; }
       .io-rd h3:first-child { margin-top:0; }
       .io-rd-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; }
@@ -811,8 +814,9 @@ IO.register({
 
     // ---------- ataque a Centros Militares ----------
     const ACT_ATTACK = 18;          // ação de mapa "Atacar" um CM
-    const ATTACK_DELAY_MS = 150;    // intervalo mínimo entre ataques da rajada
-    const atk = { cm: null, waves: null, win: null, castleId: null, foundId: null, nomer: null, mode: 2 };
+    const MODES = { 2: 'Batalha campal', 1: 'Cerco à Fortaleza' };
+    let atkRunning = false;
+    let atkCm = null; // CM atualmente no painel
 
     function waitFor(test, timeoutMs = 9000) {
       return new Promise((resolve, reject) => {
@@ -826,17 +830,65 @@ IO.register({
       });
     }
 
+    // Espera a resposta de uma chamada xajax pelo nome da função (hook do XHR, uma vez só).
+    const xajaxWaiters = [];
+    (function hookXhr() {
+      if (window.__ioRadarXhrHook) return;
+      window.__ioRadarXhrHook = true;
+      const proto = window.XMLHttpRequest.prototype;
+      const open = proto.open, send = proto.send;
+      proto.open = function (m, u) { this.__ioUrl = u; return open.apply(this, arguments); };
+      proto.send = function (body) {
+        const fn = (String(body || '').match(/xjxfun=([^&]+)/) || [])[1];
+        if (fn) this.addEventListener('loadend', () => {
+          for (let i = xajaxWaiters.length - 1; i >= 0; i--) {
+            if (xajaxWaiters[i].fn === fn) { xajaxWaiters[i].resolve(String(this.responseText || '')); xajaxWaiters.splice(i, 1); }
+          }
+        });
+        return send.apply(this, arguments);
+      };
+    })();
+    function waitXajax(fn, timeout = 20000) {
+      return new Promise((resolve, reject) => {
+        const w = { fn, resolve }; xajaxWaiters.push(w);
+        setTimeout(() => { const i = xajaxWaiters.indexOf(w); if (i >= 0) { xajaxWaiters.splice(i, 1); reject(new Error('tempo esgotado: ' + fn)); } }, timeout);
+      });
+    }
+
+    // Avisos/mensagens da resposta do jogo (para saber se o ataque foi aceite ou recusado).
+    function responseMessages(resp) {
+      const out = [];
+      const html = [...String(resp).matchAll(/<!\[CDATA\[S?([\s\S]*?)\]\]>/g)].map((m) => m[1]).join('\n');
+      const div = document.createElement('div');
+      div.innerHTML = html.replace(/<script[\s\S]*?<\/script>/g, '');
+      $$(div, '[class*="notice"],[class*="error"],[class*="message"],[class*="alert"],.msg').forEach((el) => {
+        const text = el.textContent.replace(/\s+/g, ' ').trim();
+        if (text) out.push({ negative: /negativ|erro|error|n[aã]o pode|insuficien|m[ií]nimo/i.test(el.className + ' ' + text), text });
+      });
+      [...String(resp).matchAll(/toast\('([^']+)'/g)].forEach((m) => {
+        try { const h = decodeURIComponent(window.atob(m[1])); const d = document.createElement('div'); d.innerHTML = h; out.push({ negative: /negativ/.test(h), text: d.textContent.replace(/\s+/g, ' ').trim() }); } catch (e) { /* ignora */ }
+      });
+      return out;
+    }
+
     const atkBox = () => state.root && $(state.root, '.io-rd-atk');
-    function atkStatus(text) { const b = atkBox(); if (b && $(b, '.io-rd-atk-status')) $(b, '.io-rd-atk-status').textContent = text; }
+    function atkLog(msg, cls) {
+      const box = atkBox(); if (!box) return;
+      const log = $(box, '.io-rd-atk-log'); if (!log) return;
+      const line = document.createElement('div'); if (cls) line.className = 'io-rd-' + cls; line.textContent = msg;
+      log.appendChild(line); log.scrollTop = log.scrollHeight;
+    }
+    function atkLogClear() { const box = atkBox(); const log = box && $(box, '.io-rd-atk-log'); if (log) log.innerHTML = ''; }
 
     // "Atacar" simples: abre a tela de ataque do próprio jogo (igual ao botão do mapa).
     function nativeAttack(cid) {
       try { window.do_action2(ACT_ATTACK, 'castle' + cid); }
-      catch (e) { atkStatus('Não deu para abrir o ataque: ' + e.message); }
+      catch (e) { atkLog('Não deu para abrir o ataque: ' + e.message, 'err'); }
     }
 
     function openMassPanel(cm) {
       const box = atkBox(); if (!box) return;
+      atkCm = cm;
       box.hidden = false;
       box.innerHTML = `
         <div class="io-rd-atk-head"><b>Atacar em massa</b> — Centro Militar ${esc(cm.number)} (${esc(cm.alliance || '?')})
@@ -845,71 +897,106 @@ IO.register({
           <span class="io-rd-field">Nº de ataques: <input type="number" class="io-rd-atk-n" min="1" max="200" value="10" style="width:56px"></span>
           <span class="io-rd-field">Modo:
             <select class="io-rd-atk-mode"><option value="2">Batalha campal</option><option value="1">Cerco à Fortaleza</option></select></span>
-          <button type="button" class="button-v2 io-rd-atk-prepare">Preparar</button>
+          <span class="io-rd-field">Intervalo (ms): <input type="number" class="io-rd-atk-delay" min="0" step="100" value="800" style="width:64px"></span>
         </div>
-        <div class="io-rd-atk-status io-rd-muted"></div>
-        <div class="io-rd-atk-plan"></div>`;
-      $(box, '.io-rd-atk-close').addEventListener('click', () => { box.hidden = true; box.innerHTML = ''; });
-      $(box, '.io-rd-atk-prepare').addEventListener('click', () => prepareMass(cm));
+        <div class="io-rd-bar" style="margin:5px 0">
+          <button type="button" class="button-v2 io-rd-atk-sim">Simular</button>
+          <button type="button" class="button-v2 io-rd-atk-fire">Atacar</button>
+        </div>
+        <div class="io-rd-atk-log"></div>`;
+      $(box, '.io-rd-atk-close').addEventListener('click', () => { box.hidden = true; box.innerHTML = ''; atkCm = null; });
+      $(box, '.io-rd-atk-sim').addEventListener('click', () => runMass(false));
+      $(box, '.io-rd-atk-fire').addEventListener('click', confirmThenAttack);
     }
 
-    // Abre a tela de ataque, lê o exército disponível e divide-o em N partes iguais.
-    async function prepareMass(cm) {
+    function confirmThenAttack() {
       const box = atkBox(); if (!box) return;
       const n = Math.max(1, parseInt($(box, '.io-rd-atk-n').value, 10) || 1);
-      const mode = $(box, '.io-rd-atk-mode').value === '1' ? 1 : 2;
-      const castleId = window.castle_id_changed;
-      if (!castleId) { atkStatus('Precisas de estar dentro de um domínio da aliança (entra num castelo/CM teu).'); return; }
-      const foundId = String(cm.cid).split('_')[0];
-      const nomer = String(cm.cid).split('_')[1] || cm.number;
-      atkStatus('A abrir a tela de ataque e a ler o exército disponível…');
-      const cs = window.containersStuff;
-      const win = cs.findContaner({ saveName: 'io_mass_atk', title: 'Ataque em massa', template: 'untabbed' });
-      try { window.xajax_viewAllianceOperationCenter(win, { tab: 2, castleId, attackParams: String(cm.cid) }); }
-      catch (e) { atkStatus('Erro ao abrir: ' + e.message); return; }
-      let formBox;
-      try { formBox = await waitFor(() => { const b = document.getElementById('messagebox' + win); return b && b.querySelector('#sendAttackForm input[id^="M_"]') ? b : null; }); }
-      catch (e) { atkStatus('Não consegui ler o formulário de ataque (a tela não abriu).'); return; }
-      const units = [...formBox.querySelectorAll('#sendAttackForm input[id^="M_"]')].map((inp) => {
+      atkLogClear();
+      atkLog(`Confirma enviar ${n} ataque(s) reais ao CM ${atkCm ? atkCm.number : ''}?`, 'err');
+      const bar = document.createElement('div'); bar.className = 'io-rd-bar'; bar.style.margin = '4px 0';
+      bar.innerHTML = '<button type="button" class="button-v2 io-rd-atk-confirm">Confirmar envio</button><button type="button" class="io-rd-link io-rd-atk-no">cancelar</button>';
+      $(box, '.io-rd-atk-log').appendChild(bar);
+      $(bar, '.io-rd-atk-confirm').addEventListener('click', () => { bar.remove(); runMass(true); });
+      $(bar, '.io-rd-atk-no').addEventListener('click', () => { bar.remove(); atkLog('Cancelado.'); });
+    }
+
+    // Abre a tela de ataque ao CM e espera o formulário ficar pronto; devolve o id da janela.
+    async function openAttackScreen(cm, castleId) {
+      const win = window.containersStuff.findContaner({ saveName: 'io_mass_atk', title: 'Ataque em massa', template: 'untabbed' });
+      const done = waitXajax('viewAllianceOperationCenter').catch(() => {});
+      window.xajax_viewAllianceOperationCenter(win, { tab: 2, castleId, attackParams: String(cm.cid) });
+      await done;
+      await waitFor(() => document.querySelector('#messagebox' + win + ' #sendAttackForm input[id^="M_"]'));
+      return win;
+    }
+
+    function readArmy(win) {
+      const box = document.getElementById('messagebox' + win); if (!box) return [];
+      return [...box.querySelectorAll('#sendAttackForm input[id^="M_"]')].map((inp) => {
         const code = inp.id.slice(2);
         const oc = [...(inp.closest('tr,div,td') || inp.parentElement).querySelectorAll('[onclick]')]
           .map((e) => e.getAttribute('onclick')).find((o) => o && o.indexOf(inp.id) >= 0 && /value=\d+/.test(o));
         const max = oc ? parseInt((oc.match(/value=(\d+)/) || [])[1], 10) : 0;
         return { code, max };
       }).filter((u) => u.max > 0);
-      if (!units.length) { atkStatus('Sem tropas disponíveis neste domínio.'); return; }
-      const formation = (formBox.querySelector('#FORMATION') || {}).value || '1';
-      const ime = (formBox.querySelector('#alliance_account_search') || {}).value || cm.alliance || '';
-      const waves = [];
-      for (let i = 0; i < n; i++) {
-        const w = { cs_rp_nomer: String(nomer), foundId: String(foundId), FORMATION: String(formation), ime: String(ime) };
-        units.forEach((u) => { w['M_' + u.code] = String(Math.floor(u.max / n) + (i < (u.max % n) ? 1 : 0)); });
-        waves.push(w);
-      }
-      Object.assign(atk, { cm, waves, win, castleId, foundId, nomer, mode });
-      const perWave = units.map((u) => `${u.code}: ${fmt(Math.floor(u.max / n))}${u.max % n ? '/' + fmt(Math.ceil(u.max / n)) : ''}`).join(' · ');
-      $(box, '.io-rd-atk-plan').innerHTML = `
-        <div style="margin:5px 0">${n} ataques · ${esc(mode === 1 ? 'Cerco à Fortaleza' : 'Batalha campal')} · por ataque — ${perWave}</div>
-        <div style="color:#a40000;margin-bottom:5px">Isto envia ${n} ataques reais, um a seguir ao outro. Confirmar?</div>
-        <button type="button" class="button-v2 io-rd-atk-fire">Enviar ${n} ataques</button>
-        <button type="button" class="io-rd-link io-rd-atk-cancel">cancelar</button>`;
-      $(box, '.io-rd-atk-fire').addEventListener('click', fireMass);
-      $(box, '.io-rd-atk-cancel').addEventListener('click', () => { $(box, '.io-rd-atk-plan').innerHTML = ''; atkStatus('Cancelado.'); });
-      atkStatus('Pronto. Revê as quantidades e confirma.');
     }
 
-    async function fireMass() {
-      const box = atkBox(); if (!box || !atk.waves) return;
-      const fire = $(box, '.io-rd-atk-fire'); if (fire) fire.disabled = true;
-      let sent = 0;
-      for (const w of atk.waves) {
-        try { window.xajax_sendAllianceAttackAlliance(atk.win, atk.castleId, w, atk.foundId, atk.mode); sent++; }
-        catch (e) { atkStatus('Erro no ataque ' + (sent + 1) + ': ' + e.message); break; }
-        atkStatus(`A enviar ${sent}/${atk.waves.length}…`);
-        await sleep(ATTACK_DELAY_MS);
+    // Simular (really=false) só mostra o plano; Atacar (really=true) envia.
+    async function runMass(really) {
+      if (atkRunning) return;
+      const box = atkBox(); const cm = atkCm; if (!box || !cm) return;
+      atkLogClear();
+      const n = Math.max(1, parseInt($(box, '.io-rd-atk-n').value, 10) || 1);
+      const mode = $(box, '.io-rd-atk-mode').value === '1' ? 1 : 2;
+      const delay = Math.max(0, parseInt($(box, '.io-rd-atk-delay').value, 10) || 0);
+      const castleId = window.castle_id_changed;
+      if (!castleId) { atkLog('Precisas de estar dentro de um domínio da aliança (entra num castelo/CM teu).', 'err'); return; }
+      const foundId = String(cm.cid).split('_')[0];
+      const nomer = String(cm.cid).split('_')[1] || cm.number;
+      atkRunning = true;
+      const btns = $$(box, '.io-rd-atk-sim,.io-rd-atk-fire'); btns.forEach((b) => (b.disabled = true));
+      let win;
+      try {
+        win = await openAttackScreen(cm, castleId);
+        const units = readArmy(win);
+        if (!units.length) throw new Error('sem tropas disponíveis neste domínio');
+        const split = units.map((u) => ({ code: u.code, per: Math.floor(u.max / n), max: u.max }));
+        atkLog(`Alvo: CM ${nomer} (${cm.alliance || '?'}) · ${n} ataque(s) · ${MODES[mode]}`);
+        atkLog('Por ataque: ' + split.map((u) => `${u.code}=${fmt(u.per)}`).join(', ') + ` · intervalo ${delay} ms`);
+        if (split.every((u) => u.per < 1)) throw new Error('cada ataque ficaria sem tropas (reduz o nº de ataques)');
+        if (!really) { atkLog('Simulação: nada foi enviado.', 'ok'); return; }
+
+        let ok = 0;
+        for (let i = 0; i < n; i++) {
+          try {
+            if (i > 0) win = await openAttackScreen(cm, castleId); // estado fresco a cada ataque
+            const b = document.getElementById('messagebox' + win);
+            b.querySelectorAll('#sendAttackForm input[id^="M_"]').forEach((inp) => {
+              const u = split.find((s) => s.code === inp.id.slice(2));
+              inp.value = u && u.per > 0 ? String(u.per) : '';
+            });
+            const fv = window.xajax.getFormValues('sendAttackForm');
+            const done = waitXajax('sendAllianceAttackAlliance');
+            window.xajax_sendAllianceAttackAlliance(win, castleId, fv, foundId, mode);
+            const resp = await done;
+            const msgs = responseMessages(resp);
+            const neg = msgs.filter((m) => m.negative);
+            if (neg.length) throw new Error(neg.map((m) => m.text).join(' '));
+            ok++;
+            atkLog(`#${i + 1} enviado${msgs.length ? ' — ' + msgs.map((m) => m.text).join(' ') : ''}`, 'ok');
+          } catch (e) {
+            atkLog(`#${i + 1} falhou: ${e.message}`, 'err');
+          }
+          if (i < n - 1 && delay) await sleep(delay);
+        }
+        atkLog(`Concluído: ${ok}/${n} ataque(s) enviado(s).`, ok === n ? 'ok' : 'err');
+      } catch (e) {
+        atkLog('Erro: ' + e.message, 'err');
+      } finally {
+        atkRunning = false;
+        btns.forEach((b) => (b.disabled = false));
       }
-      atkStatus(`${sent} ataque(s) enviado(s) ao CM ${atk.nomer}.`);
-      const plan = $(box, '.io-rd-atk-plan'); if (plan) plan.innerHTML = '';
     }
 
     function bindMonitor() {
