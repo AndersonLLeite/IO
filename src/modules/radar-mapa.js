@@ -218,6 +218,9 @@ IO.register({
       .io-rd-tab:hover { background:linear-gradient(#f1e0b6,#d8bd83); }
       .io-rd-tab.active { background:#fffdf6; color:#7a1f0e; border-bottom:2px solid #fffdf6; }
       .io-rd-pane[hidden] { display:none; }
+      .io-rd-atk { border:1px solid #a8864a; background:rgba(255,236,180,.55); padding:6px 8px; margin:4px 0; }
+      .io-rd-atk[hidden] { display:none; }
+      .io-rd-atk-head { border-bottom:1px solid #c3b18b; padding-bottom:3px; margin-bottom:3px; }
       .io-rd h3 { margin:10px 0 6px; font-size:13px; font-weight:bold; color:#3b2a14; border-bottom:1px solid #b09a6e; padding-bottom:3px; }
       .io-rd h3:first-child { margin-top:0; }
       .io-rd-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; }
@@ -334,6 +337,7 @@ IO.register({
               <button type="button" class="button-v2 io-rd-mon-now">Verificar agora</button>
             </div>
             <div class="io-rd-mon-status io-rd-muted" style="margin:3px 0"></div>
+            <div class="io-rd-atk" hidden></div>
             <div class="io-rd-mon-results"></div>
           </div>
           </div>
@@ -665,12 +669,18 @@ IO.register({
       { label: 'Sudoeste', qx: 85, qy: 415 }, { label: 'Sul', qx: 250, qy: 415 }, { label: 'Sudeste', qx: 415, qy: 415 },
     ];
 
-    // O reino é identificado pelo parâmetro realm da página (link de convite / batalhas do dia).
+    // O reino é identificado pelo parâmetro realm da página; o último válido fica guardado
+    // para nunca cair em '0' (o que faria os dados parecer que sumiram).
+    const REALM_KEY = 'io_last_realm';
     function realmId() {
       const h = document.documentElement.innerHTML;
-      const m = h.match(/register\.php\?realm=(\d+)/) || h.match(/showBattleOfDay\((\d+)/);
-      return m ? m[1] : '0';
+      const m = h.match(/register\.php\?realm=(\d+)/) || h.match(/showBattleOfDay\((\d+)/) || h.match(/[?&]realm=(\d+)/);
+      if (m) { try { localStorage.setItem(REALM_KEY, m[1]); } catch (e) { /* ignorado */ } return m[1]; }
+      try { return localStorage.getItem(REALM_KEY) || '0'; } catch (e) { return '0'; }
     }
+
+    // Impede o navegador de limpar o IndexedDB sob pressão de espaço (dados permanentes).
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* ignorado */ }
 
     const monitor = {
       data: null,
@@ -703,10 +713,10 @@ IO.register({
         const ids = [...blockSet];
         const owners = {};
         const found = [];
-        let errors = 0;
+        let errors = 0, fetchFailed = false;
         for (let i = 0; i < ids.length; i += BLOCKS_PER_REQUEST) {
           try { found.push(...parseBlocks(await fetchBlocks(ids.slice(i, i + BLOCKS_PER_REQUEST)), owners)); errors = 0; }
-          catch (e) { if (++errors >= 3) { monitorStatus('Verificação falhada: o servidor recusou várias requisições.'); return; } await sleep(1500); }
+          catch (e) { fetchFailed = true; if (++errors >= 3) { monitorStatus('Verificação falhada: o servidor recusou várias requisições.'); return; } await sleep(1500); }
           await sleep(REQUEST_DELAY_MS);
         }
         const now = Date.now();
@@ -720,18 +730,20 @@ IO.register({
         found.filter((it) => it.kind === 'military').forEach((it) => {
           const key = it.cid || String(it.id);
           seen.add(key);
+          const attackable = (it.acs || []).includes(18); // ação 18 = Atacar (só surge dentro de um domínio)
           const prev = rd.cms[key];
           if (!prev) {
-            rd.cms[key] = { cid: key, number: it.number || key, terrain: it.name, alliance: it.alliance || '', x: it.x, y: it.y, castle: nearest(it), firstSeen: now, lastSeen: now };
+            rd.cms[key] = { cid: key, number: it.number || key, terrain: it.name, alliance: it.alliance || '', x: it.x, y: it.y, castle: nearest(it), attackable, firstSeen: now, lastSeen: now };
             novos++;
           } else {
             prev.lastSeen = now; // firstSeen nunca muda enquanto o CM existir
-            prev.alliance = it.alliance || prev.alliance; prev.x = it.x; prev.y = it.y; prev.castle = nearest(it);
+            prev.alliance = it.alliance || prev.alliance; prev.x = it.x; prev.y = it.y; prev.castle = nearest(it); prev.attackable = attackable;
           }
         });
-        // CMs que já não estão no mapa (destruídos) saem da lista.
+        // CMs que já não estão no mapa (destruídos) saem da lista — mas só se a verificação foi completa,
+        // para uma falha de rede não apagar dados bons.
         let removidos = 0;
-        Object.keys(rd.cms).forEach((key) => { if (!seen.has(key)) { delete rd.cms[key]; removidos++; } });
+        if (!fetchFailed) Object.keys(rd.cms).forEach((key) => { if (!seen.has(key)) { delete rd.cms[key]; removidos++; } });
         rd.lastRun = now;
         await IO.store.db.set(MONITOR_KEY, data).catch(() => {});
         monitor.status = `Última verificação: ${new Date(now).toLocaleString('pt-PT')} · ${novos} novo(s) · ${removidos} removido(s) · ${Object.keys(rd.cms).length} CMs`;
@@ -769,19 +781,136 @@ IO.register({
       if (!cms.length) { results.innerHTML = '<div class="io-rd-empty">Nenhum Centro Militar registado ainda neste reino.</div>'; return; }
       const when = (t) => new Date(t).toLocaleString('pt-PT');
       results.innerHTML = `<table class="data-grid espy">
-        <tr><th>Nº</th><th>Castelo</th><th>Aliança</th><th>Quadrante</th><th>1ª vez visto</th><th>Última vez</th></tr>
+        <tr><th>Nº</th><th>Castelo</th><th>Aliança</th><th>Quadrante</th><th>1ª vez visto</th><th>Última vez</th><th></th></tr>
         ${cms.map((c) => `<tr>
           <td>${esc(c.number)}</td><td>${esc(c.castle || '—')}</td><td>${esc(c.alliance || '—')}</td>
           <td class="io-rd-center">${quadrant(c.x)}:${quadrant(c.y)}</td>
           <td>${esc(when(c.firstSeen))}</td><td class="io-rd-muted">${esc(when(c.lastSeen))}</td>
+          <td class="io-rd-actions">${c.attackable
+            ? `<button type="button" data-atk-native="${esc(c.cid)}" title="Abrir a tela de ataque do jogo">Atacar</button>
+               <button type="button" data-atk-mass="${esc(c.cid)}" title="Enviar vários ataques dividindo a tropa">Massa</button>`
+            : '<span class="io-rd-muted" title="Só aparece dentro de um domínio da aliança">—</span>'}</td>
         </tr>`).join('')}
       </table>`;
+    }
+
+    // ---------- ataque a Centros Militares ----------
+    const ACT_ATTACK = 18;          // ação de mapa "Atacar" um CM
+    const ATTACK_DELAY_MS = 150;    // intervalo mínimo entre ataques da rajada
+    const atk = { cm: null, waves: null, win: null, castleId: null, foundId: null, nomer: null, mode: 2 };
+
+    function waitFor(test, timeoutMs = 9000) {
+      return new Promise((resolve, reject) => {
+        const t0 = Date.now();
+        (function poll() {
+          let r; try { r = test(); } catch (e) { r = null; }
+          if (r) return resolve(r);
+          if (Date.now() - t0 > timeoutMs) return reject(new Error('demorou demasiado'));
+          setTimeout(poll, 150);
+        })();
+      });
+    }
+
+    const atkBox = () => state.root && $(state.root, '.io-rd-atk');
+    function atkStatus(text) { const b = atkBox(); if (b && $(b, '.io-rd-atk-status')) $(b, '.io-rd-atk-status').textContent = text; }
+
+    // "Atacar" simples: abre a tela de ataque do próprio jogo (igual ao botão do mapa).
+    function nativeAttack(cid) {
+      try { window.do_action2(ACT_ATTACK, 'castle' + cid); }
+      catch (e) { atkStatus('Não deu para abrir o ataque: ' + e.message); }
+    }
+
+    function openMassPanel(cm) {
+      const box = atkBox(); if (!box) return;
+      box.hidden = false;
+      box.innerHTML = `
+        <div class="io-rd-atk-head"><b>Atacar em massa</b> — Centro Militar ${esc(cm.number)} (${esc(cm.alliance || '?')})
+          <button type="button" class="io-rd-link io-rd-atk-close" style="float:right">fechar</button></div>
+        <div class="io-rd-bar" style="margin:5px 0">
+          <span class="io-rd-field">Nº de ataques: <input type="number" class="io-rd-atk-n" min="1" max="200" value="10" style="width:56px"></span>
+          <span class="io-rd-field">Modo:
+            <select class="io-rd-atk-mode"><option value="2">Batalha campal</option><option value="1">Cerco à Fortaleza</option></select></span>
+          <button type="button" class="button-v2 io-rd-atk-prepare">Preparar</button>
+        </div>
+        <div class="io-rd-atk-status io-rd-muted"></div>
+        <div class="io-rd-atk-plan"></div>`;
+      $(box, '.io-rd-atk-close').addEventListener('click', () => { box.hidden = true; box.innerHTML = ''; });
+      $(box, '.io-rd-atk-prepare').addEventListener('click', () => prepareMass(cm));
+    }
+
+    // Abre a tela de ataque, lê o exército disponível e divide-o em N partes iguais.
+    async function prepareMass(cm) {
+      const box = atkBox(); if (!box) return;
+      const n = Math.max(1, parseInt($(box, '.io-rd-atk-n').value, 10) || 1);
+      const mode = $(box, '.io-rd-atk-mode').value === '1' ? 1 : 2;
+      const castleId = window.castle_id_changed;
+      if (!castleId) { atkStatus('Precisas de estar dentro de um domínio da aliança (entra num castelo/CM teu).'); return; }
+      const foundId = String(cm.cid).split('_')[0];
+      const nomer = String(cm.cid).split('_')[1] || cm.number;
+      atkStatus('A abrir a tela de ataque e a ler o exército disponível…');
+      const cs = window.containersStuff;
+      const win = cs.findContaner({ saveName: 'io_mass_atk', title: 'Ataque em massa', template: 'untabbed' });
+      try { window.xajax_viewAllianceOperationCenter(win, { tab: 2, castleId, attackParams: String(cm.cid) }); }
+      catch (e) { atkStatus('Erro ao abrir: ' + e.message); return; }
+      let formBox;
+      try { formBox = await waitFor(() => { const b = document.getElementById('messagebox' + win); return b && b.querySelector('#sendAttackForm input[id^="M_"]') ? b : null; }); }
+      catch (e) { atkStatus('Não consegui ler o formulário de ataque (a tela não abriu).'); return; }
+      const units = [...formBox.querySelectorAll('#sendAttackForm input[id^="M_"]')].map((inp) => {
+        const code = inp.id.slice(2);
+        const oc = [...(inp.closest('tr,div,td') || inp.parentElement).querySelectorAll('[onclick]')]
+          .map((e) => e.getAttribute('onclick')).find((o) => o && o.indexOf(inp.id) >= 0 && /value=\d+/.test(o));
+        const max = oc ? parseInt((oc.match(/value=(\d+)/) || [])[1], 10) : 0;
+        return { code, max };
+      }).filter((u) => u.max > 0);
+      if (!units.length) { atkStatus('Sem tropas disponíveis neste domínio.'); return; }
+      const formation = (formBox.querySelector('#FORMATION') || {}).value || '1';
+      const ime = (formBox.querySelector('#alliance_account_search') || {}).value || cm.alliance || '';
+      const waves = [];
+      for (let i = 0; i < n; i++) {
+        const w = { cs_rp_nomer: String(nomer), foundId: String(foundId), FORMATION: String(formation), ime: String(ime) };
+        units.forEach((u) => { w['M_' + u.code] = String(Math.floor(u.max / n) + (i < (u.max % n) ? 1 : 0)); });
+        waves.push(w);
+      }
+      Object.assign(atk, { cm, waves, win, castleId, foundId, nomer, mode });
+      const perWave = units.map((u) => `${u.code}: ${fmt(Math.floor(u.max / n))}${u.max % n ? '/' + fmt(Math.ceil(u.max / n)) : ''}`).join(' · ');
+      $(box, '.io-rd-atk-plan').innerHTML = `
+        <div style="margin:5px 0">${n} ataques · ${esc(mode === 1 ? 'Cerco à Fortaleza' : 'Batalha campal')} · por ataque — ${perWave}</div>
+        <div style="color:#a40000;margin-bottom:5px">Isto envia ${n} ataques reais, um a seguir ao outro. Confirmar?</div>
+        <button type="button" class="button-v2 io-rd-atk-fire">Enviar ${n} ataques</button>
+        <button type="button" class="io-rd-link io-rd-atk-cancel">cancelar</button>`;
+      $(box, '.io-rd-atk-fire').addEventListener('click', fireMass);
+      $(box, '.io-rd-atk-cancel').addEventListener('click', () => { $(box, '.io-rd-atk-plan').innerHTML = ''; atkStatus('Cancelado.'); });
+      atkStatus('Pronto. Revê as quantidades e confirma.');
+    }
+
+    async function fireMass() {
+      const box = atkBox(); if (!box || !atk.waves) return;
+      const fire = $(box, '.io-rd-atk-fire'); if (fire) fire.disabled = true;
+      let sent = 0;
+      for (const w of atk.waves) {
+        try { window.xajax_sendAllianceAttackAlliance(atk.win, atk.castleId, w, atk.foundId, atk.mode); sent++; }
+        catch (e) { atkStatus('Erro no ataque ' + (sent + 1) + ': ' + e.message); break; }
+        atkStatus(`A enviar ${sent}/${atk.waves.length}…`);
+        await sleep(ATTACK_DELAY_MS);
+      }
+      atkStatus(`${sent} ataque(s) enviado(s) ao CM ${atk.nomer}.`);
+      const plan = $(box, '.io-rd-atk-plan'); if (plan) plan.innerHTML = '';
     }
 
     function bindMonitor() {
       const box = $(state.root, '.io-rd-monitor'); if (!box) return;
       $(box, '.io-rd-mon-on').addEventListener('change', (e) => setMonitorOn(e.target.checked));
       $(box, '.io-rd-mon-now').addEventListener('click', () => monitorCycle());
+      box.addEventListener('click', (e) => {
+        const nat = e.target.closest('[data-atk-native]');
+        if (nat) { nativeAttack(nat.dataset.atkNative); return; }
+        const mass = e.target.closest('[data-atk-mass]');
+        if (mass) {
+          const rd = (monitor.data && monitor.data.realms[monitor.realm]) || { cms: {} };
+          const cm = rd.cms[mass.dataset.atkMass];
+          if (cm) openMassPanel(cm);
+        }
+      });
     }
 
     monitorLoad().then(() => { renderMonitor(); if (monitor.on) scheduleMonitor(); });
