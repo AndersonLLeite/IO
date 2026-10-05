@@ -20,7 +20,7 @@ Só esse script fica ativo no Tampermonkey; ele carrega os módulos sozinho.
 |---|---|---|
 | `soldados-treino` | Soma por tropa das unidades em treino, concluídas e pendentes | dentro da janela "Soldados a treinar" |
 | `calculadora-marcha` | Tempo de marcha e horário de retorno, por tropa, cartografia e velocidade do reino | botão de bússola no menu da direita |
-| `radar-mapa` | Varre o mapa (colónias, centros militares, recursos de 10%) e tem um monitor que vigia os CMs à volta dos 9 castelos a cada 10–15 min, por reino | botão de radar no rodapé |
+| `radar-mapa` | Varre o mapa (colónias, CMs, recursos de 10%) e vigia os CMs à volta dos 9 castelos a cada 10–15 min (por reino, dados permanentes), com ataque simples ou em rajada dividindo a tropa | botão de radar no rodapé |
 | `alianca-panorama` | Soma o exército (por raça) e a economia de todos os membros, e simula quantas tropas a aliança produz por dia e até ao fim da era | aba "Panorama" na janela da aliança |
 
 ## Estrutura
