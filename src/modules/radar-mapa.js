@@ -277,7 +277,7 @@ IO.register({
       state.root = $(win.box, '.io-rd');
       bindWindow();
 
-      if (!state.scan) state.scan = await IO.store.db.get(DB_RECORD + '-' + realmId());
+      if (!state.scan) state.scan = await durableGet(DB_RECORD + '-' + realmId());
       renderAll();
       loadMapImages().then(() => renderResults());
       if (!state.detectedBase) {
@@ -483,7 +483,7 @@ IO.register({
       const items = previous.filter((it) => !scannedBlocks.has(String(it.block))).concat(found);
       const unique = new Map(items.map((it) => [it.kind + ':' + it.id + ':' + it.x + ':' + it.y, it]));
       state.scan = { timestamp: Date.now(), base, radius, items: [...unique.values()], owners, partial: state.cancel || aborted || missing.length > 0 };
-      await IO.store.db.set(DB_RECORD + '-' + realmId(), state.scan).catch(() => {});
+      await durableSet(DB_RECORD + '-' + realmId(), state.scan);
 
       state.scanning = false;
       if (document.contains(btn)) { btn.textContent = 'Varrer mapa'; bar.hidden = true; }
@@ -682,6 +682,21 @@ IO.register({
     // Impede o navegador de limpar o IndexedDB sob pressão de espaço (dados permanentes).
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* ignorado */ }
 
+    // Guarda em IndexedDB e também no localStorage (mais durável); lê com recurso ao backup.
+    // Assim os dados sobrevivem mesmo que o navegador limpe o IndexedDB.
+    async function durableGet(key) {
+      let v = null;
+      try { v = await IO.store.db.get(key); } catch (e) { /* ignorado */ }
+      if (v == null) {
+        try { const s = localStorage.getItem('io_bak_' + key); if (s) { v = JSON.parse(s); IO.store.db.set(key, v).catch(() => {}); } } catch (e) { /* ignorado */ }
+      }
+      return v;
+    }
+    async function durableSet(key, value) {
+      try { await IO.store.db.set(key, value); } catch (e) { /* ignorado */ }
+      try { localStorage.setItem('io_bak_' + key, JSON.stringify(value)); } catch (e) { /* localStorage cheio: fica só no IndexedDB */ }
+    }
+
     const monitor = {
       data: null,
       on: !!IO.store.local.get(MONITOR_ON_KEY, { on: false }).on,
@@ -690,7 +705,7 @@ IO.register({
     };
 
     async function monitorLoad() {
-      if (!monitor.data) monitor.data = (await IO.store.db.get(MONITOR_KEY)) || { realms: {} };
+      if (!monitor.data) monitor.data = (await durableGet(MONITOR_KEY)) || { realms: {} };
       return monitor.data;
     }
     function realmData(data) {
@@ -745,7 +760,7 @@ IO.register({
         let removidos = 0;
         if (!fetchFailed) Object.keys(rd.cms).forEach((key) => { if (!seen.has(key)) { delete rd.cms[key]; removidos++; } });
         rd.lastRun = now;
-        await IO.store.db.set(MONITOR_KEY, data).catch(() => {});
+        await durableSet(MONITOR_KEY, data);
         monitor.status = `Última verificação: ${new Date(now).toLocaleString('pt-PT')} · ${novos} novo(s) · ${removidos} removido(s) · ${Object.keys(rd.cms).length} CMs`;
       } finally {
         monitor.running = false;
