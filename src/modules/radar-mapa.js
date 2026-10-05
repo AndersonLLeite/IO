@@ -143,6 +143,10 @@ IO.register({
         return { ...base, kind: 'colony', name: unhtml(ownerName), userId: ownerId, points,
           alliance, raceId: o.race_id || 0, terrain, resourceName, ...bonus };
       }
+      if (/^castelo/i.test(terrain)) {
+        const castleName = unhtml(pickKey(t, (k) => k === 'nome') || terrain);
+        return { ...base, kind: 'castle', name: castleName, terrain, alliance, cid: String(o.id).replace(/^castle/i, '') };
+      }
       if (/^centro militar/i.test(terrain)) {
         // O jogo identifica cada CM pelo id sem o prefixo "castle" (ex.: castle380 → 380, castle6365_306 → 6365_306);
         // o "número" visível é o último grupo de dígitos. Um CM destruído e reconstruído recebe número novo.
@@ -762,6 +766,13 @@ IO.register({
         // para uma falha de rede não apagar dados bons.
         let removidos = 0;
         if (!fetchFailed) Object.keys(rd.cms).forEach((key) => { if (!seen.has(key)) { delete rd.cms[key]; removidos++; } });
+        // Castelos: só informação, substituídos a cada verificação completa.
+        if (!fetchFailed) {
+          rd.castles = {};
+          found.filter((it) => it.kind === 'castle').forEach((it) => {
+            rd.castles[it.cid] = { cid: it.cid, name: it.name, alliance: it.alliance || '', x: it.x, y: it.y, region: nearest(it), lastSeen: now };
+          });
+        }
         rd.lastRun = now;
         await durableSet(MONITOR_KEY, data);
         monitor.status = `Última verificação: ${new Date(now).toLocaleString('pt-PT')} · ${novos} novo(s) · ${removidos} removido(s) · ${Object.keys(rd.cms).length} CMs`;
@@ -796,9 +807,18 @@ IO.register({
 
       const cms = Object.values(rd.cms).sort((a, b) => b.firstSeen - a.firstSeen);
       const results = $(box, '.io-rd-mon-results');
-      if (!cms.length) { results.innerHTML = '<div class="io-rd-empty">Nenhum Centro Militar registado ainda neste reino.</div>'; return; }
       const when = (t) => new Date(t).toLocaleString('pt-PT');
-      results.innerHTML = `<table class="data-grid espy">
+      const castles = Object.values(rd.castles || {}).sort((a, b) => CASTLES.findIndex((c) => c.label === a.region) - CASTLES.findIndex((c) => c.label === b.region));
+      const castlesHtml = castles.length ? `<h3>Castelos</h3><table class="data-grid espy">
+        <tr><th>Região</th><th>Nome</th><th>Aliança</th><th>Quadrante</th><th>Visto em</th><th></th></tr>
+        ${castles.map((c) => `<tr>
+          <td>${esc(c.region || '—')}</td><td>${esc(c.name)}</td><td>${esc(c.alliance || '—')}</td>
+          <td class="io-rd-center">${quadrant(c.x)}:${quadrant(c.y)}</td><td class="io-rd-muted">${esc(when(c.lastSeen))}</td>
+          <td class="io-rd-actions"><button type="button" disabled title="Sem função">Atacar</button><button type="button" disabled title="Sem função">Massa</button></td>
+        </tr>`).join('')}
+      </table><h3>Centros Militares</h3>` : '';
+      if (!cms.length) { results.innerHTML = castlesHtml + '<div class="io-rd-empty">Nenhum Centro Militar registado ainda neste reino.</div>'; return; }
+      results.innerHTML = castlesHtml + `<table class="data-grid espy">
         <tr><th>Nº</th><th>Castelo</th><th>Aliança</th><th>Quadrante</th><th>1ª vez visto</th><th>Última vez</th><th></th></tr>
         ${cms.map((c) => `<tr>
           <td>${esc(c.number)}</td><td>${esc(c.castle || '—')}</td><td>${esc(c.alliance || '—')}</td>
